@@ -1,0 +1,386 @@
+{
+  "version": "2.1",
+  "constants": {
+    "initial_morale": 60,
+    "max_morale": 100,
+    "shangyang_max_morale": 80,
+    "initial_patience": 12,
+    "actions_per_turn": 2,
+    "attacks_per_turn": 1,
+    "refreshes_per_turn": 3,
+    "refresh_cost": 5,
+    "base_conventional_power": 20,
+    "silk_road_morale_bonus": 5,
+    "fleet_morale_cost": 30,
+    "max_advisors": 2,
+    "event_interval_turns": 3,
+    "good_ending_morale_threshold": 60,
+    "region_hp_multiplier": 1.5
+  },
+  "palette": {
+    "obsidian": "#0B0D10",
+    "bronze": "#2C2620",
+    "gold": "#FFB347",
+    "cyan": "#00F0FF",
+    "crimson": "#FF2A2A"
+  },
+  "regions": [
+    {
+      "id": "steppe",
+      "name": "北方草原",
+      "coverage": "匈奴 + 西伯利亚",
+      "hp": 15,
+      "efficiency": 1.0,
+      "prereq": "",
+      "requires_sea": false,
+      "pos3d": [3.08, 0.0, -2.05],
+      "reward": "新手练手区，常规秦军即可轻松拿下"
+    },
+    {
+      "id": "west",
+      "name": "西域与中亚",
+      "coverage": "西域诸国 + 丝绸之路",
+      "hp": 30,
+      "efficiency": 1.0,
+      "prereq": "",
+      "requires_sea": false,
+      "pos3d": [1.82, 0.0, -1.1],
+      "reward": "每回合开始额外 +5 民心（丝绸之路商贸红利）"
+    },
+    {
+      "id": "south_asia",
+      "name": "南亚与大洋",
+      "coverage": "孔雀王朝 + 东南亚/澳洲",
+      "hp": 52,
+      "efficiency": 0.75,
+      "prereq": "west",
+      "requires_sea": false,
+      "pos3d": [3.22, 0.0, 0.79],
+      "reward": "使用【青霉素】当回合效率恢复为 1.00"
+    },
+    {
+      "id": "west_asia",
+      "name": "西亚与北非",
+      "coverage": "安息波斯 + 古埃及",
+      "hp": 82,
+      "efficiency": 0.6,
+      "prereq": "west",
+      "requires_sea": false,
+      "pos3d": [0.7, 0.0, 0.0],
+      "reward": "敌军机动强，无人机或霍去病有奇效"
+    },
+    {
+      "id": "europe",
+      "name": "欧罗巴",
+      "coverage": "罗马帝国 + 欧洲全境",
+      "hp": 135,
+      "efficiency": 0.3,
+      "prereq": "west_asia",
+      "requires_sea": false,
+      "pos3d": [0.28, 0.0, -1.5],
+      "reward": "终极军事 Boss"
+    },
+    {
+      "id": "americas",
+      "name": "未知新大陆",
+      "coverage": "南北美洲",
+      "hp": 45,
+      "efficiency": 1.0,
+      "prereq": "",
+      "requires_sea": true,
+      "pos3d": [-3.64, 0.0, -0.24],
+      "reward": "须先购买跨海铁甲舰或强征造楼船渡海"
+    }
+  ],
+  "advisors": [
+    {
+      "id": "zhugeliang",
+      "name": "诸葛亮",
+      "cost": 20,
+      "mvp": true,
+      "portrait": "res://assets/portraits/zhugeliang.jpg",
+      "skill": "每次购买军事外挂时，扣除的民心值减半（0.5向上取整）"
+    },
+    {
+      "id": "caocao",
+      "name": "曹操",
+      "cost": 15,
+      "mvp": true,
+      "portrait": "res://assets/portraits/caocao.jpg",
+      "skill": "军事外挂战力翻倍（含AK-47兵马俑+60），每次使用额外-10民心"
+    },
+    {
+      "id": "tanghe",
+      "name": "汤和",
+      "cost": 15,
+      "mvp": true,
+      "portrait": "res://assets/portraits/tanghe.jpg",
+      "skill": "筑城守望：每3回合事件扣民心减半，造楼船消耗减半（不减半焚书与贷款）"
+    },
+    {
+      "id": "huoqubing",
+      "name": "霍去病",
+      "cost": 15,
+      "mvp": true,
+      "portrait": "res://assets/portraits/huoqubing.jpg",
+      "skill": "【无人机蜂群】无视防御直接秒杀任意板块"
+    },
+    {
+      "id": "shangyang",
+      "name": "商鞅",
+      "cost": 10,
+      "mvp": false,
+      "portrait": "res://assets/portraits/shangyang.jpg",
+      "skill": "常规秦军战力翻倍，但民心上限锁死在 80"
+    },
+    {
+      "id": "zhangqian",
+      "name": "张骞",
+      "cost": 15,
+      "mvp": false,
+      "portrait": "res://assets/portraits/zhangqian.jpg",
+      "skill": "每攻克一个新板块，立刻恢复 8 民心"
+    },
+    {
+      "id": "libing",
+      "name": "李冰",
+      "cost": 15,
+      "mvp": false,
+      "portrait": "res://assets/portraits/libing.jpg",
+      "skill": "所有【民生科技】回复的民心值翻倍（跨时空贷款不翻倍）"
+    },
+    {
+      "id": "hanxin",
+      "name": "韩信",
+      "cost": 25,
+      "mvp": false,
+      "portrait": "res://assets/portraits/hanxin.jpg",
+      "skill": "每回合开始自动对随机未占领板块造成 25 点伤害"
+    },
+    {
+      "id": "wanganshi",
+      "name": "王安石",
+      "cost": 20,
+      "mvp": false,
+      "portrait": "res://assets/portraits/wanganshi.jpg",
+      "skill": "终端刷新免费，且所有外挂的民心消耗降低 20%"
+    }
+  ],
+  "cheats": [
+    {
+      "id": "rice",
+      "name": "杂交水稻",
+      "category": "livelihood",
+      "morale_delta": 30,
+      "damage": 0,
+      "one_time": false,
+      "needs_target": false,
+      "mvp": true,
+      "desc": "稳住基本盘，沙盘长出金色麦浪"
+    },
+    {
+      "id": "penicillin",
+      "name": "青霉素",
+      "category": "livelihood",
+      "morale_delta": 20,
+      "damage": 0,
+      "one_time": false,
+      "needs_target": false,
+      "mvp": true,
+      "desc": "治愈瘟疫，当回合南亚与大洋常规进攻效率恢复为 1.00"
+    },
+    {
+      "id": "cement_road",
+      "name": "水泥直道",
+      "category": "livelihood",
+      "morale_delta": 15,
+      "damage": 0,
+      "one_time": true,
+      "needs_target": false,
+      "mvp": true,
+      "desc": "永久提升常规秦军战力 +10（每局限买1次）"
+    },
+    {
+      "id": "education",
+      "name": "义务教育",
+      "category": "livelihood",
+      "morale_delta": 25,
+      "damage": 0,
+      "one_time": false,
+      "needs_target": false,
+      "mvp": false,
+      "desc": "大幅回民心，须在当回合常规进攻前购买，且本回合无法常规进攻"
+    },
+    {
+      "id": "drone",
+      "name": "无人机蜂群",
+      "category": "military",
+      "morale_delta": -20,
+      "damage": 45,
+      "one_time": false,
+      "needs_target": true,
+      "mvp": true,
+      "desc": "对指定板块造成 45 战力打击（青色光轨演出）"
+    },
+    {
+      "id": "artillery",
+      "name": "卫星制导重炮",
+      "category": "military",
+      "morale_delta": -30,
+      "damage": 75,
+      "one_time": false,
+      "needs_target": true,
+      "mvp": true,
+      "desc": "对指定板块造成 75 战力毁灭打击"
+    },
+    {
+      "id": "ak47",
+      "name": "AK-47 兵马俑",
+      "category": "military",
+      "morale_delta": -25,
+      "damage": 0,
+      "one_time": true,
+      "needs_target": false,
+      "mvp": false,
+      "desc": "永久强化常规秦军每次进攻战力 +30（曹操在场+60），每局限买1次"
+    },
+    {
+      "id": "ironclad",
+      "name": "跨海铁甲舰",
+      "category": "military",
+      "morale_delta": -15,
+      "damage": 30,
+      "one_time": true,
+      "needs_target": true,
+      "mvp": true,
+      "desc": "免费解锁【未知新大陆】渡海权限，并造成 30 战力打击（每局限买1次）"
+    },
+    {
+      "id": "cyber_burn",
+      "name": "赛博焚书",
+      "category": "blacktech",
+      "morale_delta": 0,
+      "damage": 0,
+      "one_time": false,
+      "needs_target": false,
+      "mvp": false,
+      "desc": "锁死民心 2 回合，期间一切民心扣减无效，第2回合结束反噬 -35 民心"
+    },
+    {
+      "id": "holo_emperor",
+      "name": "全息假始皇",
+      "category": "blacktech",
+      "morale_delta": -15,
+      "damage": 0,
+      "one_time": true,
+      "needs_target": false,
+      "mvp": true,
+      "desc": "糊弄朝堂，始皇耐心 +3 回合（每局限买1次）"
+    },
+    {
+      "id": "time_loan",
+      "name": "跨时空贷款",
+      "category": "blacktech",
+      "morale_delta": 40,
+      "damage": 0,
+      "one_time": false,
+      "needs_target": false,
+      "mvp": false,
+      "desc": "立刻 +40 民心救场，接下来 3 回合每回合自动 -15 民心"
+    },
+    {
+      "id": "nuke_seal",
+      "name": "核聚变传国玉玺",
+      "category": "blacktech",
+      "morale_delta": -50,
+      "damage": 999,
+      "one_time": false,
+      "needs_target": true,
+      "mvp": true,
+      "desc": "终极外挂：直接秒杀任意一个板块，触发全屏震动"
+    }
+  ],
+  "events": [
+    {
+      "id": "rumor",
+      "title": "1. 赛博舆情监控",
+      "desc": "咸阳街头流传“方士用铁鸟摄魂”的谣言，人心浮动。",
+      "option_a": { "label": "全网控评删帖", "morale_loss": 10 },
+      "option_b": { "label": "公开无人机表演", "type": "action_penalty", "amount": 1, "fallback_morale_loss": 10 }
+    },
+    {
+      "id": "overheat",
+      "title": "2. 阿房宫算力过载",
+      "desc": "终端算力消耗过大，宫内酷热，工匠抱怨连连。",
+      "option_a": { "label": "强征民夫运冰降温", "morale_loss": 10 },
+      "option_b": { "label": "降频节能运行", "type": "disable_refresh_and_debuff", "power_debuff": 5 }
+    },
+    {
+      "id": "mohist_hack",
+      "title": "3. 墨家黑客入侵",
+      "desc": "墨家残部试图破解你的沙盘加密协议，盗取火药配方。",
+      "option_a": { "label": "暴力封锁城门搜捕", "morale_loss": 10 },
+      "option_b": { "label": "放任部分技术外流", "type": "buff_random_region", "hp_add": 15 }
+    },
+    {
+      "id": "supply_line",
+      "title": "4. 远征军粮道告急",
+      "desc": "前线战线拉长，传统马车运粮损耗严重，军心不稳。",
+      "option_a": { "label": "加征战时军粮税", "morale_loss": 10 },
+      "option_b": { "label": "紧急空投压缩饼干", "type": "action_penalty", "amount": 1, "fallback_morale_loss": 10 }
+    }
+  ],
+  "hidden_levels": [
+    {
+      "id": "penglai",
+      "name": "蓬莱仙岛",
+      "trigger_morale_lt": 50,
+      "costs_action": true,
+      "costs_refresh": false,
+      "requires_advisor": false,
+      "morale_gain": 35,
+      "patience_delta": -1,
+      "mvp": false
+    },
+    {
+      "id": "dazexiang",
+      "name": "大泽乡暗流",
+      "trigger_morale_lt": 40,
+      "costs_action": true,
+      "costs_refresh": false,
+      "requires_advisor": true,
+      "morale_gain": 25,
+      "patience_delta": 0,
+      "mvp": true
+    },
+    {
+      "id": "antarctica",
+      "name": "南极时间舱",
+      "trigger_morale_lt": 50,
+      "costs_action": false,
+      "costs_refresh": true,
+      "requires_advisor": false,
+      "morale_gain": 50,
+      "patience_delta": 0,
+      "mvp": false
+    }
+  ],
+  "endings": {
+    "win_sage": {
+      "title": "千古一帝 · 守望大同",
+      "prompt": "你守住了人心，人类文明提前两千年望见大同。"
+    },
+    "win_tyrant": {
+      "title": "赛博暴君 · 孤城独望",
+      "prompt": "疆域已统一，却无人与你共望未来。你创造了一个永恒的赛博牢笼。"
+    },
+    "lose_morale": {
+      "title": "大泽乡 2.0 · 守城失据",
+      "prompt": "民心归零，沙盘爆出猩红起义光点，终端蓝屏。"
+    },
+    "lose_time": {
+      "title": "大泽乡 2.0 · 守城失据",
+      "prompt": "十二回合已至而寰宇未平，始皇耐心耗尽。"
+    }
+  }
+}
