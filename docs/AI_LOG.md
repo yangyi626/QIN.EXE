@@ -10,3 +10,4 @@
 | 2026-11-22 | 图像生成工具 | Sprint 名臣立绘 | `assets/portraits/{shangyang,zhangqian,libing,hanxin,wanganshi}.jpg` | 5 张扩展名臣全息立绘（360×360），至此 9 位名臣立绘全部齐备 |
 | 2026-11-22 | 图像生成工具 | 场景概念与沙盘贴图 | `assets/textures/sandtable_map.jpg`, `assets/textures/concept_xianyang.jpg` | 咸阳宫概念图与 16:9 玄黑青铜世界地图顶视贴图（1280×720），已接入 3D 沙盘桌面 |
 | 2026-11-25 | Codex | 沙盘交互、军令卡与战斗反馈 | `scripts/ui/main_scene.gd`, `shaders/territory_map.gdshader` | 使用已有地图与名臣素材，在 Godot 实机验证选区、瞄准、取消和攻克反馈。 |
+| 2026-11-25 | Gemini + Python 程序合成 | 在场名臣槽位、弹窗视觉、3D 氛围与原创音效 | `scripts/ui/main_scene.gd`, `assets/audio/*.wav` | 补齐 2 位在场名臣状态栏与满员替换弹窗、统一暗青金事件/结局弹窗、恢复 3D 青铜鼎与始皇御座剪影并合成 8 条零版权依赖的 PCM WAV 音效 |

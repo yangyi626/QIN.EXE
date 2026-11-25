@@ -24,6 +24,7 @@ var _report: Label
 var _camera_tween: Tween
 const GOLD := Color("#edbe74")
 const CYAN := Color("#7adfd7")
+const CRIMSON := Color("#ff4d4d")
 const MUTED := Color("#a2b5b4")
 const PIN_OFFSETS := {
 	"americas": Vector2(-100, 16), "europe": Vector2(-129, -58),
@@ -36,9 +37,18 @@ var _region_pos: Dictionary = {}    # region_id -> Vector3
 var _hidden_nodes: Dictionary = {}  # hidden_id -> MeshInstance3D
 var _holo_sprites: Array[Sprite3D] = []
 var _cauldron_light: OmniLight3D
+var _cauldron_flame: MeshInstance3D
+var _flame_time: float = 0.0
+
+# 音频系统
+var _audio_muted: bool = false
+var _bgm_player: AudioStreamPlayer
+var _sfx_player: AudioStreamPlayer
+var _sfx_bank: Dictionary = {}
 
 # 交互状态
 var _pending_cheat_slot: int = -1
+var _pending_replace_card_slot: int = -1
 var _camera_mode: String = "sandtable" # "sandtable" | "terminal"
 
 # UI 节点引用
@@ -51,7 +61,9 @@ var _lbl_banter: Label
 var _btn_refresh: Button
 var _btn_fleet: Button
 var _btn_pool: Button
+var _btn_mute: Button
 var _cards_box: VBoxContainer
+var _advisors_box: HBoxContainer
 var _modal_shade: ColorRect
 var _hidden_box: HBoxContainer
 var _event_panel: PanelContainer
@@ -62,12 +74,18 @@ var _event_btn_b: Button
 var _ending_panel: PanelContainer
 var _ending_title: Label
 var _ending_desc: Label
+var _replace_panel: PanelContainer
+var _replace_title: Label
+var _replace_desc: Label
+var _replace_btn_0: Button
+var _replace_btn_1: Button
 
 
 func _ready() -> void:
 	_game_data = JSON.parse_string(FileAccess.get_file_as_string("res://data/game_data.json"))
 	_lines_data = JSON.parse_string(FileAccess.get_file_as_string("res://data/lines.json"))
 
+	_setup_audio()
 	_build_3d_sandtable()
 	_build_ui_overlay()
 
@@ -82,6 +100,57 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_frame_map)
 	_frame_map()
 	_restart()
+
+
+func _setup_audio() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	_bgm_player = AudioStreamPlayer.new()
+	_bgm_player.volume_db = -14.0
+	add_child(_bgm_player)
+	if ResourceLoader.exists("res://assets/audio/bgm_ambient.wav"):
+		_bgm_player.stream = load("res://assets/audio/bgm_ambient.wav")
+		_bgm_player.finished.connect(func():
+			if not _audio_muted and _bgm_player.stream != null:
+				_bgm_player.play()
+		)
+		_bgm_player.play()
+
+	_sfx_player = AudioStreamPlayer.new()
+	_sfx_player.volume_db = -6.0
+	add_child(_sfx_player)
+
+	var names := {
+		"click": "res://assets/audio/sfx_click.wav",
+		"strike": "res://assets/audio/sfx_strike.wav",
+		"conquer": "res://assets/audio/sfx_conquer.wav",
+		"summon": "res://assets/audio/sfx_summon.wav",
+		"event": "res://assets/audio/sfx_event.wav",
+		"victory": "res://assets/audio/sfx_victory.wav",
+		"defeat": "res://assets/audio/sfx_defeat.wav",
+	}
+	for k in names.keys():
+		if ResourceLoader.exists(names[k]):
+			_sfx_bank[k] = load(names[k])
+
+
+func _play_sfx(key: String) -> void:
+	if _audio_muted or not _sfx_bank.has(key):
+		return
+	_sfx_player.stream = _sfx_bank[key]
+	_sfx_player.play()
+
+
+func _toggle_mute() -> void:
+	if _bgm_player == null:
+		return
+	_audio_muted = not _audio_muted
+	_btn_mute.text = "静音中" if _audio_muted else "音效开"
+	if _audio_muted:
+		_bgm_player.stop()
+		_sfx_player.stop()
+	elif _bgm_player.stream != null:
+		_bgm_player.play()
 
 
 func _build_3d_sandtable() -> void:
@@ -121,7 +190,7 @@ func _build_3d_sandtable() -> void:
 	var qin_lbl := _make_label3d(Vector3(4.23, 0.28, -0.71), "大秦·咸阳", Color("#FFB347"))
 	add_child(qin_lbl)
 
-	# 3. 全球 6 大板块全息信标盘 + 悬浮战力标牌（不遮挡底图版图浮雕）
+	# 3. 全球 6 大板块全息信标盘
 	for r in _game_data.get("regions", []):
 		var p: Array = r["pos3d"]
 		var pos := Vector3(p[0], 0.04, p[2])
@@ -130,22 +199,47 @@ func _build_3d_sandtable() -> void:
 		_region_meshes[r["id"]] = beacon
 		_region_pos[r["id"]] = pos
 
-
+	# 4. 桌角青铜鼎实体 + 脉动民心火光
+	var cauldron_base := _make_beacon(Vector3(-6.35, 0.24, 3.15), 0.44, 0.48, Color("#3a2e22"), Color("#6b4a1f"))
+	add_child(cauldron_base)
+	var cauldron_rim := _make_beacon(Vector3(-6.35, 0.5, 3.15), 0.5, 0.08, Color("#2C2620"), Color("#FFB347"))
+	add_child(cauldron_rim)
+	_cauldron_flame = MeshInstance3D.new()
+	var fmesh := SphereMesh.new()
+	fmesh.radius = 0.24
+	fmesh.height = 0.52
+	_cauldron_flame.mesh = fmesh
+	var fmat := StandardMaterial3D.new()
+	fmat.albedo_color = Color("#FFB347")
+	fmat.emission_enabled = true
+	fmat.emission = Color("#FFB347")
+	fmat.emission_energy_multiplier = 2.8
+	_cauldron_flame.material_override = fmat
+	_cauldron_flame.position = Vector3(-6.35, 0.72, 3.15)
+	add_child(_cauldron_flame)
 
 	_cauldron_light = OmniLight3D.new()
-	_cauldron_light.position = Vector3(-6.4, 1.4, 3.2)
+	_cauldron_light.position = Vector3(-6.35, 1.45, 3.15)
 	_cauldron_light.light_color = Color("#FFB347")
 	_cauldron_light.light_energy = 2.4
 	_cauldron_light.omni_range = 13.0
 	add_child(_cauldron_light)
 
+	# 5. 沙盘北侧高台秦始皇御座剪影（暗玄黑+微弱鎏金背光）
+	var dais := _make_block(Vector3(0.0, 0.14, -4.48), Vector3(2.8, 0.28, 0.8), Color("#12100E"), Color("#4a371c"))
+	add_child(dais)
+	var throne := _make_block(Vector3(0.0, 0.95, -4.62), Vector3(1.15, 1.5, 0.28), Color("#08090C"), Color("#2C2620"))
+	add_child(throne)
+	var emperor := _make_beacon(Vector3(0.0, 0.82, -4.42), 0.34, 1.15, Color("#050608"), Color("#704e1e"))
+	add_child(emperor)
 
-	# 6. 沙盘对面 2 个 AI 名臣全息投影位（共用 hologram.gdshader）
+	# 6. 沙盘北缘 2 个 AI 名臣全息投影位（面向正交镜头，避免被裁切）
 	var shader: Shader = load("res://shaders/hologram.gdshader")
-	for x_pos in [-3.4, 3.4]:
+	for x_pos in [-2.65, 2.65]:
 		var sp := Sprite3D.new()
-		sp.position = Vector3(x_pos, 1.65, -4.8)
-		sp.pixel_size = 0.0065
+		sp.position = Vector3(x_pos, 0.85, -4.18)
+		sp.pixel_size = 0.0044
+		sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		sp.visible = false
 		var smat := ShaderMaterial.new()
 		smat.shader = shader
@@ -267,12 +361,14 @@ func _button(parent: Control, title: String, callback: Callable) -> Button:
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.add_theme_stylebox_override("normal", _style(Color("#17252b"), Color("#395052"), 6))
 	button.add_theme_stylebox_override("hover", _style(Color("#284044"), CYAN, 6))
+	button.add_theme_stylebox_override("pressed", _style(Color("#0f1b20"), GOLD, 6))
+	button.add_theme_stylebox_override("disabled", _style(Color("#121a1e"), Color("#273437"), 6))
 	button.pressed.connect(callback)
 	parent.add_child(button)
 	return button
 
 
-func _panel(parent: Node, preset: Control.LayoutPreset, margins: Vector4) -> PanelContainer:
+func _panel(parent: Node, preset: Control.LayoutPreset, margins: Vector4, border: Color = Color("#394749"), pad: int = 12) -> PanelContainer:
 	var panel := PanelContainer.new()
 	parent.add_child(panel)
 	panel.set_anchors_and_offsets_preset(preset)
@@ -280,7 +376,7 @@ func _panel(parent: Node, preset: Control.LayoutPreset, margins: Vector4) -> Pan
 	panel.offset_top = margins.y
 	panel.offset_right = margins.z
 	panel.offset_bottom = margins.w
-	panel.add_theme_stylebox_override("panel", _style(Color("#101b21f5"), Color("#394749"), 12))
+	panel.add_theme_stylebox_override("panel", _style(Color("#101b21f5"), border, pad))
 	return panel
 
 
@@ -309,21 +405,30 @@ func _build_ui_overlay() -> void:
 		bar.size = Vector2(PIN_SIZE.x - 16, 4)
 		_bars[id] = bar
 
+	# 顶部状态栏
 	var top_panel := _panel(layer, Control.PRESET_TOP_WIDE, Vector4(12, 10, -12, 62))
 	var top := HBoxContainer.new()
 	top_panel.add_child(top)
-	top.add_theme_constant_override("separation", 16)
+	top.add_theme_constant_override("separation", 14)
 	_label(top, "大秦  /  2076", 22, GOLD)
 	_lbl_act = _label(top, "", 16, Color.WHITE)
 	_lbl_morale = _label(top, "", 16, CYAN)
 	_lbl_conquest = _label(top, "", 16, Color.WHITE)
 	_lbl_patience = _label(top, "", 16, MUTED)
 	_lbl_patience.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_mute = _button(top, "音效开", _toggle_mute)
 	_button(top, "切换视角", _toggle_camera)
 	_btn_pool = _button(top, "完整池", _toggle_pool)
-	_button(top, "重开", _restart)
+	_button(top, "重开", func(): _play_sfx("click"); _restart())
 
-	var term := _panel(layer, Control.PRESET_RIGHT_WIDE, Vector4(-342, 80, -12, -12))
+	# 左上角在场名臣常驻槽位（2 席）
+	var adv_panel := _panel(layer, Control.PRESET_TOP_LEFT, Vector4(12, 72, 376, 134), Color("#3b4d52"), 8)
+	_advisors_box = HBoxContainer.new()
+	_advisors_box.add_theme_constant_override("separation", 10)
+	adv_panel.add_child(_advisors_box)
+
+	# 右侧军令终端
+	var term := _panel(layer, Control.PRESET_RIGHT_WIDE, Vector4(-342, 72, -12, -12))
 	var tv := VBoxContainer.new()
 	tv.add_theme_constant_override("separation", 9)
 	term.add_child(tv)
@@ -332,13 +437,14 @@ func _build_ui_overlay() -> void:
 	_cards_box = VBoxContainer.new()
 	_cards_box.add_theme_constant_override("separation", 8)
 	tv.add_child(_cards_box)
-	_btn_refresh = _button(tv, "", func(): _cancel_aim(); _result(core.refresh_terminal()))
-	_btn_fleet = _button(tv, "", func(): _cancel_aim(); _result(core.build_fleet()))
+	_btn_refresh = _button(tv, "", func(): _play_sfx("click"); _cancel_aim(); _result(core.refresh_terminal()))
+	_btn_fleet = _button(tv, "", func(): _play_sfx("click"); _cancel_aim(); _result(core.build_fleet()))
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tv.add_child(spacer)
-	_button(tv, "结束回合  →", func(): _cancel_aim(); _result(core.end_turn()))
+	_button(tv, "结束回合  →", func(): _play_sfx("click"); _cancel_aim(); _result(core.end_turn()))
 
+	# 底部战区详情与战报栏
 	var bottom := _panel(layer, Control.PRESET_BOTTOM_WIDE, Vector4(12, -147, -354, -12))
 	var bv := VBoxContainer.new()
 	bottom.add_child(bv)
@@ -346,40 +452,60 @@ func _build_ui_overlay() -> void:
 	bv.add_child(row)
 	_detail = _label(row, "", 17, GOLD)
 	_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_attack = _button(row, "常规进攻", func(): _result(core.conventional_attack(_selected)))
-	_cancel = _button(row, "取消瞄准", _cancel_aim)
+	_attack = _button(row, "常规进攻", func(): _play_sfx("click"); _result(core.conventional_attack(_selected)))
+	_cancel = _button(row, "取消瞄准", func(): _play_sfx("click"); _cancel_aim())
 	_lbl_banter = _label(bv, "", 15, MUTED)
 	_report = _label(bv, "", 16, CYAN)
 	_hidden_box = HBoxContainer.new()
+	_hidden_box.add_theme_constant_override("separation", 8)
 	bv.add_child(_hidden_box)
+
+	# 模态弹窗半透明遮罩
 	_modal_shade = ColorRect.new()
 	layer.add_child(_modal_shade)
 	_modal_shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_modal_shade.color = Color(0.02, 0.04, 0.06, 0.66)
+	_modal_shade.color = Color(0.02, 0.04, 0.06, 0.68)
 	_modal_shade.hide()
 
-	# 突发事件弹窗
-	_event_panel = PanelContainer.new()
-	_event_panel.set_anchors_preset(Control.PRESET_CENTER)
-	_event_panel.offset_left = -240; _event_panel.offset_top = -120; _event_panel.offset_right = 240; _event_panel.offset_bottom = 120
+	# 突发事件弹窗（暗青金统一视觉）
+	_event_panel = _panel(layer, Control.PRESET_CENTER, Vector4(-260, -145, 260, 145), GOLD, 18)
 	_event_panel.visible = false
-	layer.add_child(_event_panel)
-	var ev_box := VBoxContainer.new(); _event_panel.add_child(ev_box)
-	_event_title = Label.new(); ev_box.add_child(_event_title)
-	_event_desc = Label.new(); _event_desc.autowrap_mode = TextServer.AUTOWRAP_WORD; ev_box.add_child(_event_desc)
-	_event_btn_a = Button.new(); _event_btn_a.pressed.connect(func(): _event_panel.visible = false; core.resolve_event("A")); ev_box.add_child(_event_btn_a)
-	_event_btn_b = Button.new(); _event_btn_b.pressed.connect(func(): _event_panel.visible = false; core.resolve_event("B")); ev_box.add_child(_event_btn_b)
+	var ev_box := VBoxContainer.new()
+	ev_box.add_theme_constant_override("separation", 10)
+	_event_panel.add_child(ev_box)
+	_label(ev_box, "突发急报  /  历史 × 科技", 13, CYAN)
+	_event_title = _label(ev_box, "", 21, GOLD)
+	_event_desc = _label(ev_box, "", 15, Color("#dbe6e6"))
+	_event_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_event_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_event_btn_a = _button(ev_box, "", func(): _play_sfx("click"); _event_panel.visible = false; core.resolve_event("A"))
+	_event_btn_b = _button(ev_box, "", func(): _play_sfx("click"); _event_panel.visible = false; core.resolve_event("B"))
 
-	# 结局弹窗
-	_ending_panel = PanelContainer.new()
-	_ending_panel.set_anchors_preset(Control.PRESET_CENTER)
-	_ending_panel.offset_left = -250; _ending_panel.offset_top = -110; _ending_panel.offset_right = 250; _ending_panel.offset_bottom = 110
+	# 结局弹窗（暗青金统一视觉）
+	_ending_panel = _panel(layer, Control.PRESET_CENTER, Vector4(-270, -135, 270, 135), GOLD, 20)
 	_ending_panel.visible = false
-	layer.add_child(_ending_panel)
-	var end_box := VBoxContainer.new(); _ending_panel.add_child(end_box)
-	_ending_title = Label.new(); end_box.add_child(_ending_title)
-	_ending_desc = Label.new(); _ending_desc.autowrap_mode = TextServer.AUTOWRAP_WORD; end_box.add_child(_ending_desc)
-	var end_re := Button.new(); end_re.text = "再开一局"; end_re.pressed.connect(_restart); end_box.add_child(end_re)
+	var end_box := VBoxContainer.new()
+	end_box.add_theme_constant_override("separation", 12)
+	_ending_panel.add_child(end_box)
+	_label(end_box, "大秦终局档案", 13, CYAN)
+	_ending_title = _label(end_box, "", 24, GOLD)
+	_ending_desc = _label(end_box, "", 16, Color("#e4efef"))
+	_ending_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_ending_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_button(end_box, "再开一局", func(): _play_sfx("click"); _restart())
+
+	# 满员替换名臣弹窗
+	_replace_panel = _panel(layer, Control.PRESET_CENTER, Vector4(-260, -145, 260, 145), CYAN, 18)
+	_replace_panel.visible = false
+	var rep_box := VBoxContainer.new()
+	rep_box.add_theme_constant_override("separation", 10)
+	_replace_panel.add_child(rep_box)
+	_label(rep_box, "名臣席位已满（上限 2 位）", 13, CYAN)
+	_replace_title = _label(rep_box, "", 20, GOLD)
+	_replace_desc = _label(rep_box, "请选择要离场的名臣席位：", 15, MUTED)
+	_replace_btn_0 = _button(rep_box, "", _confirm_replace.bind(0))
+	_replace_btn_1 = _button(rep_box, "", _confirm_replace.bind(1))
+	_button(rep_box, "取消召唤", _cancel_replace)
 
 
 func _frame_map() -> void:
@@ -394,6 +520,7 @@ func _frame_map() -> void:
 
 
 func _toggle_camera() -> void:
+	_play_sfx("click")
 	_camera_mode = "terminal" if _camera_mode == "sandtable" else "sandtable"
 	var old_pos := camera.position
 	var old_rot := camera.rotation
@@ -410,9 +537,14 @@ func _toggle_camera() -> void:
 	_camera_tween.tween_callback(_place_pins)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _camera_tween and _camera_tween.is_running():
 		_place_pins()
+	# 青铜鼎火光柔和脉动
+	if _cauldron_flame != null:
+		_flame_time += delta * 4.2
+		var pulse := 1.0 + 0.08 * sin(_flame_time)
+		_cauldron_flame.scale = Vector3(pulse, 1.0 + 0.14 * cos(_flame_time * 1.3), pulse)
 
 
 func _place_pins() -> void:
@@ -441,6 +573,10 @@ func _draw_routes() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _replace_panel.visible and event.is_action_pressed("ui_cancel"):
+		_cancel_replace()
+		get_viewport().set_input_as_handled()
+		return
 	if _modal_shade.visible:
 		return
 	if _pending_cheat_slot >= 0 and event.is_action_pressed("ui_cancel"):
@@ -456,35 +592,54 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _restart() -> void:
 	_pending_cheat_slot = -1
+	_pending_replace_card_slot = -1
 	_selected = ""
 	_report.text = ""
 	_ending_panel.hide()
 	_event_panel.hide()
+	_replace_panel.hide()
 	_modal_shade.hide()
 	core.init_game(_game_data, _lines_data, _mvp_only)
 
 
 func _toggle_pool() -> void:
+	_play_sfx("click")
 	_mvp_only = not _mvp_only
 	_btn_pool.text = "精简池" if _mvp_only else "完整池"
 	_restart()
 
 
+func _sync_modal_shade() -> void:
+	_modal_shade.visible = (
+		_event_panel.visible
+		or _ending_panel.visible
+		or _replace_panel.visible
+		or (not _latest.is_empty() and (not _latest.pending_event.is_empty() or _latest.game_over_code != ""))
+	)
+
+
 func _on_state_changed(snap: Dictionary) -> void:
 	_latest = snap
-	_modal_shade.visible = not snap.pending_event.is_empty() or snap.game_over_code != ""
+	_sync_modal_shade()
 	_lbl_act.text = "第 %d 回合 · 第 %d 幕" % [snap["turn"], snap["act"]]
-	_lbl_morale.text = "民心: %d/%d" % [snap["morale"], snap["morale_cap"]]
+	var low: bool = int(snap["morale"]) < 40
+	_lbl_morale.text = ("%s民心: %d/%d" % ["⚠ " if low else "", snap["morale"], snap["morale_cap"]])
+	_lbl_morale.modulate = CRIMSON if low else CYAN
 	_lbl_conquest.text = "统一: %d/6" % snap["conquered_count"]
 	_lbl_patience.text = "始皇耐心: %d" % snap["patience"]
 	_lbl_actions.text = "行动 %s  %d/2　·　进攻 %d/1" % ["●".repeat(snap["actions_left"]) + "○".repeat(2 - snap["actions_left"]), snap["actions_left"], snap["attack_left"]]
 
-	# 青铜鼎火光随民心实时变化
-	var low: bool = int(snap["morale"]) < 40
-	_cauldron_light.light_color = Color("#FF2A2A") if low else Color("#FFB347")
+	# 青铜鼎火光与火芯随民心实时变化
+	var flame_col := Color("#FF2A2A") if low else Color("#FFB347")
+	_cauldron_light.light_color = flame_col
 	_cauldron_light.light_energy = 1.2 + float(snap["morale"]) / 45.0
+	if _cauldron_flame and _cauldron_flame.material_override is StandardMaterial3D:
+		var fm: StandardMaterial3D = _cauldron_flame.material_override
+		fm.albedo_color = flame_col
+		fm.emission = flame_col
+		fm.emission_energy_multiplier = 3.4 if low else (1.5 + float(snap["morale"]) / 40.0)
 
-	# 更新 3D 板块信标染黑状态与悬浮标牌
+	# 更新 3D 板块信标染黑状态与地图着色器
 	var occupied := PackedFloat32Array()
 	for r in snap["regions"]:
 		occupied.append(1.0 if r.conquered else 0.0)
@@ -499,7 +654,7 @@ func _on_state_changed(snap: Dictionary) -> void:
 	occupied.append(0.0) # Xianyang is already highlighted on the original map.
 	_map_material.set_shader_parameter("occupied", occupied)
 
-	# 更新 3D 全息名臣立绘（支持全部 9 位名臣）
+	# 更新 3D 全息名臣立绘 & 左上角 2D 在场名臣槽位
 	var advs: Array = snap["advisors"]
 	for i in range(2):
 		var sp := _holo_sprites[i]
@@ -512,6 +667,7 @@ func _on_state_changed(snap: Dictionary) -> void:
 			sp.visible = true
 		else:
 			sp.visible = false
+	_refresh_advisor_bar(advs)
 
 	# 更新隐藏关 3D 微光点与按钮
 	for ch in _hidden_box.get_children():
@@ -521,12 +677,47 @@ func _on_state_changed(snap: Dictionary) -> void:
 		if _hidden_nodes.has(hid):
 			_hidden_nodes[hid].visible = bool(hvis[hid])
 		if bool(hvis[hid]):
-			var hb := Button.new()
-			hb.text = "探索 · " + str({"penglai":"蓬莱仙岛", "dazexiang":"大泽乡", "antarctica":"南极时间舱"}.get(hid, hid))
-			hb.pressed.connect(func(): _cancel_aim(); _result(core.trigger_hidden(hid)))
-			_hidden_box.add_child(hb)
+			var label_txt := "✦ 探索 · " + str({"penglai":"蓬莱仙岛", "dazexiang":"大泽乡", "antarctica":"南极时间舱"}.get(hid, hid))
+			var hb := _button(_hidden_box, label_txt, func(): _play_sfx("click"); _cancel_aim(); _result(core.trigger_hidden(hid)))
+			hb.add_theme_color_override("font_color", GOLD)
 
 	_refresh_commands()
+
+
+func _refresh_advisor_bar(advs: Array) -> void:
+	for ch in _advisors_box.get_children():
+		_advisors_box.remove_child(ch)
+		ch.queue_free()
+	for i in range(2):
+		var slot_box := PanelContainer.new()
+		slot_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var has_adv := i < advs.size()
+		slot_box.add_theme_stylebox_override("panel", _style(Color("#15242a") if has_adv else Color("#0e171c"), GOLD if has_adv else Color("#2b3a3e"), 5))
+		_advisors_box.add_child(slot_box)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		slot_box.add_child(row)
+		if has_adv:
+			var adv: Dictionary = advs[i]
+			var p_path: String = adv.get("portrait", "")
+			if p_path != "" and ResourceLoader.exists(p_path):
+				var tex_rect := TextureRect.new()
+				tex_rect.texture = load(p_path)
+				tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				tex_rect.custom_minimum_size = Vector2(34, 34)
+				row.add_child(tex_rect)
+			var txt := VBoxContainer.new()
+			txt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(txt)
+			_label(txt, "%d号席 · %s" % [i + 1, adv["name"]], 14, GOLD)
+			var sk := _label(txt, str(adv["skill"]).substr(0, 12) + "…", 11, MUTED)
+			sk.clip_text = true
+			slot_box.tooltip_text = "【%s】%s" % [adv["name"], adv["skill"]]
+		else:
+			var empty_lbl := _label(row, "名臣 %d 号席 · 空" % (i + 1), 13, Color("#607376"))
+			empty_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			slot_box.tooltip_text = "可在右侧终端召唤历史名臣入列（最多同时在场 2 位）"
 
 
 func _refresh_commands() -> void:
@@ -548,17 +739,19 @@ func _add_card(slot: int) -> void:
 	var advisor: bool = card.kind == "advisor"
 	var kind: String = "名臣" if advisor else {"military":"军事", "livelihood":"民生", "blacktech":"奇术"}[data.category]
 	var tint: Color = {"军事":CYAN, "民生":Color("#aace94"), "奇术":Color("#c6afd9"), "名臣":GOLD}[kind]
+	var is_free_hook: bool = (not card.bought) and bool(_latest.get("free_hook_available", false)) and (advisor or data.id == "drone")
 	var delta := -core.get_effective_advisor_cost(data) if advisor else core.get_effective_cheat_delta(data)
 	if delta < 0 and _latest.cyber_burn_turns > 0:
 		delta = 0
-	var price := "民心 %+d" % delta if delta != 0 else "免民心"
+	var price := "★ 首回合免费" if is_free_hook else ("民心 %+d" % delta if delta != 0 else "免民心")
 	var button := _button(_cards_box, "", _use_card.bind(slot))
 	button.custom_minimum_size.y = 108
 	button.disabled = card.bought or _latest.actions_left <= 0 or (data.id == "education" and _latest.attack_left <= 0)
 	var active := slot == _pending_cheat_slot
-	var face := _style(Color("#183237") if active else Color("#19272e"), tint if active else Color("#374a50"), 0)
+	var border_col := GOLD if is_free_hook else (tint if active else Color("#374a50"))
+	var face := _style(Color("#183237") if active else (Color("#1d2a2d") if is_free_hook else Color("#19272e")), border_col, 0)
 	face.border_width_left = 3
-	face.border_color = tint.darkened(0.15)
+	face.border_color = GOLD if is_free_hook else tint.darkened(0.15)
 	button.add_theme_stylebox_override("normal", face)
 	var body := VBoxContainer.new()
 	button.add_child(body)
@@ -572,12 +765,12 @@ func _add_card(slot: int) -> void:
 	var terms := "%s　/　%s" % [kind, state]
 	if not card.bought:
 		terms += "　·　" + price
-	var meta := _label(body, terms, 13, tint)
+	var meta := _label(body, terms, 13, GOLD if is_free_hook else tint)
 	meta.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var title_row := HBoxContainer.new()
 	title_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	body.add_child(title_row)
-	if advisor:
+	if advisor and ResourceLoader.exists(data.portrait):
 		var portrait := TextureRect.new()
 		portrait.texture = load(data.portrait)
 		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -609,6 +802,7 @@ func _card_damage(data: Dictionary, hp: int) -> int:
 func _use_card(slot: int) -> void:
 	if _modal_shade.visible:
 		return
+	_play_sfx("click")
 	var card: Dictionary = _latest.terminal_cards[slot]
 	if card.kind == "cheat" and card.data.needs_target:
 		_pending_cheat_slot = -1 if _pending_cheat_slot == slot else slot
@@ -616,9 +810,46 @@ func _use_card(slot: int) -> void:
 		return
 	_pending_cheat_slot = -1
 	if card.kind == "advisor":
-		_result(core.summon_advisor(slot, 0 if core.advisors.size() >= 2 else -1))
+		if core.advisors.size() >= 2:
+			_open_replace_dialog(slot, card.data)
+		else:
+			var res := core.summon_advisor(slot, -1)
+			if res.get("ok", false):
+				_play_sfx("summon")
+			_result(res)
 	else:
 		_result(core.buy_cheat(slot))
+
+
+func _open_replace_dialog(card_slot: int, incoming: Dictionary) -> void:
+	_pending_replace_card_slot = card_slot
+	_replace_title.text = "召唤【%s】入列" % incoming["name"]
+	var a0: Dictionary = _latest.advisors[0]
+	var a1: Dictionary = _latest.advisors[1]
+	_replace_btn_0.text = "替换 1 号席：%s（%s）" % [a0["name"], str(a0["skill"]).substr(0, 18)]
+	_replace_btn_1.text = "替换 2 号席：%s（%s）" % [a1["name"], str(a1["skill"]).substr(0, 18)]
+	_replace_panel.visible = true
+	_sync_modal_shade()
+
+
+func _confirm_replace(replace_idx: int) -> void:
+	_play_sfx("click")
+	var slot := _pending_replace_card_slot
+	_pending_replace_card_slot = -1
+	_replace_panel.visible = false
+	_sync_modal_shade()
+	if slot >= 0:
+		var res := core.summon_advisor(slot, replace_idx)
+		if res.get("ok", false):
+			_play_sfx("summon")
+		_result(res)
+
+
+func _cancel_replace() -> void:
+	_play_sfx("click")
+	_pending_replace_card_slot = -1
+	_replace_panel.visible = false
+	_sync_modal_shade()
 
 
 func _cancel_aim() -> void:
@@ -630,6 +861,7 @@ func _cancel_aim() -> void:
 func _pick_region(id: String) -> void:
 	if _modal_shade.visible:
 		return
+	_play_sfx("click")
 	_selected = id
 	if _pending_cheat_slot >= 0:
 		var slot := _pending_cheat_slot
@@ -656,7 +888,9 @@ func _refresh_map() -> void:
 	_cancel.visible = _pending_cheat_slot >= 0
 	_detail.text = "选择战区"
 	_lbl_banter.text = "点选地图据点，查看守军与进攻条件。"
-	if _latest.turn == 1 and _latest.conquered_count == 0:
+	if bool(_latest.get("free_hook_available", false)):
+		_lbl_banter.text = "★ 首回合高光：右侧首次召唤【名臣】或部署【无人机蜂群】免民心！也可点北方草原发起免费常规进攻。"
+	elif _latest.turn == 1 and _latest.conquered_count == 0:
 		_lbl_banter.text = "北方草原仅有 15 守军，可在此发起首次常规进攻。"
 	for r in _latest.regions:
 		var pin: Button = _pins[r.id]
@@ -701,6 +935,7 @@ func _result(res: Dictionary) -> void:
 
 
 func _on_strike_performed(region_id: String, damage: int, source: String, conquered: bool) -> void:
+	_play_sfx("conquer" if conquered else "strike")
 	_spawn_strike_fx(region_id, conquered)
 	var pin: Button = _pins[region_id]
 	var region: Dictionary = _latest.regions.filter(func(r): return r.id == region_id)[0]
@@ -723,18 +958,23 @@ func _on_advisor_spoke(_aid: String, advisor_name: String, line: String) -> void
 
 
 func _on_hidden_triggered(hidden_id: String, reward_text: String) -> void:
+	_play_sfx("summon")
 	_report.text = "✦ 触发隐藏关【%s】：%s" % [hidden_id, reward_text]
 
 
 func _on_event_triggered(ev: Dictionary) -> void:
+	_play_sfx("event")
 	_event_title.text = ev["title"]
 	_event_desc.text = ev["desc"]
 	_event_btn_a.text = "A. %s" % ev["option_a"]["label"]
 	_event_btn_b.text = "B. %s" % ev["option_b"]["label"]
 	_event_panel.visible = true
+	_sync_modal_shade()
 
 
 func _on_game_ended(code: String, data: Dictionary) -> void:
+	_play_sfx("victory" if code.begins_with("win_") else "defeat")
 	_ending_title.text = "%s (%s)" % [data.get("title", "终局"), code]
 	_ending_desc.text = data.get("prompt", "")
 	_ending_panel.visible = true
+	_sync_modal_shade()
