@@ -31,6 +31,7 @@ const UV_REGIONS := {
 	"west_asia": Vector2(0.514, 0.646),
 	"europe": Vector2(0.506, 0.575),
 	"americas": Vector2(0.342, 0.656),
+	"paradox_core": Vector2(0.585, 0.525),
 }
 const UV_HIDDEN := {
 	"penglai": Vector2(0.726, 0.612),
@@ -46,6 +47,7 @@ const ACT_TITLES := {
 	1: ["第一幕 · 始皇初望", "咸阳终端初启，六洲烽火未熄"],
 	2: ["第二幕 · 铁骑西征", "跨时空军工入列，民心与霸业拉扯"],
 	3: ["第三幕 · 寰宇决战", "始皇耐心告急，终局近在眼前"],
+	4: ["终幕 · 2076 焚书协议", "历史修正率 100% — 未来终端已接管咸阳沙盘"],
 }
 
 # 贴图缓存
@@ -221,6 +223,8 @@ func _ready() -> void:
 	core.weakness_hit.connect(_on_weakness_hit)
 	core.secret_card_gained.connect(_on_secret_card_gained)
 	core.pact_made.connect(_on_pact_made)
+	core.boss_phase_triggered.connect(_on_boss_phase_triggered)
+	core.paradox_awakened.connect(_on_paradox_awakened)
 
 	get_viewport().size_changed.connect(_layout_dynamic_elements)
 	_restart(false)
@@ -1157,8 +1161,9 @@ func _process(delta: float) -> void:
 				if _uv_to_stage(UV_XIANYANG).distance_to(stage_m) <= 24.0:
 					found = "xianyang"
 				else:
-					for rid in UV_REGIONS.keys():
-						if _uv_to_stage(UV_REGIONS[rid]).distance_to(stage_m) <= 26.0:
+					for r_item in _latest.get("regions", []):
+						var rid: String = r_item["id"]
+						if UV_REGIONS.has(rid) and _uv_to_stage(UV_REGIONS[rid]).distance_to(stage_m) <= (32.0 if rid == "paradox_core" else 26.0):
 							found = rid
 							break
 		_hovered_region = found
@@ -1274,7 +1279,8 @@ func _draw_stage_fx() -> void:
 		var conquered: bool = bool(r["conquered"])
 		var can_hit: bool = _pending_cheat_slot >= 0 or core.can_attack_region(rid)
 		var is_hov: bool = (rid == _hovered_region or rid == _selected)
-		var col := GOLD if conquered else (CYAN if can_hit else Color("#8f8370"))
+		var is_boss_core: bool = (rid == "paradox_core")
+		var col := GOLD if conquered else (CRIMSON if is_boss_core else (CYAN if can_hit else Color("#8f8370")))
 
 		if conquered:
 			var orig_uv: Vector2 = UV_REGIONS.get(r["prereq"], UV_XIANYANG)
@@ -1303,12 +1309,21 @@ func _draw_stage_fx() -> void:
 			# 受损板块自动显示极简迷你血条（一眼掌握战局）
 			var hp: int = int(r["hp"])
 			var max_hp: int = maxi(1, int(r["max_hp"]))
-			if hp < max_hp or is_hov:
-				var bw := 36.0
+			var lock_hp: int = int(r.get("boss_lock_hp", 0))
+			var has_lock_shield: bool = (lock_hp > 0 and not bool(r.get("phase2_triggered", false)))
+			if is_boss_core:
+				var glitch_r := 22.0 + 5.0 * sin(_anim_time * 9.0)
+				_stage_fx.draw_circle(p, glitch_r, Color(CRIMSON, 0.22))
+				_stage_fx.draw_arc(p, glitch_r + 4.0, 0.0, TAU, 32, CYAN, 1.8, true)
+			if hp < max_hp or is_hov or has_lock_shield or is_boss_core:
+				var bw := 48.0 if is_boss_core else 36.0
 				var bx := p.x - bw * 0.5
 				var by := p.y + rad + 5.0
-				_stage_fx.draw_rect(Rect2(bx, by, bw, 4.0), Color(0.05, 0.07, 0.09, 0.9))
-				_stage_fx.draw_rect(Rect2(bx, by, bw * (float(hp) / float(max_hp)), 4.0), col)
+				_stage_fx.draw_rect(Rect2(bx, by, bw, 4.5), Color(0.05, 0.07, 0.09, 0.92))
+				_stage_fx.draw_rect(Rect2(bx, by, bw * (float(hp) / float(max_hp)), 4.5), col)
+				if has_lock_shield:
+					var lx := bx + bw * (float(lock_hp) / float(max_hp))
+					_stage_fx.draw_line(Vector2(lx, by - 2.0), Vector2(lx, by + 6.5), GOLD, 2.0)
 
 			if is_hov or can_hit:
 				var tag := "%s %d" % [r["name"], hp]
@@ -1416,6 +1431,9 @@ func _draw_mini_landmark(p: Vector2, id: String, col: Color) -> void:
 			_stage_fx.draw_rect(Rect2(p + Vector2(-9, 1), Vector2(18, 4)), col)
 			_stage_fx.draw_rect(Rect2(p + Vector2(-6.5, -3), Vector2(13, 4)), col)
 			_stage_fx.draw_rect(Rect2(p + Vector2(-4, -7), Vector2(8, 4)), col)
+		"paradox_core":
+			_stage_fx.draw_colored_polygon(PackedVector2Array([p + Vector2(0, -11), p + Vector2(10, 0), p + Vector2(0, 11), p + Vector2(-10, 0)]), col)
+			_stage_fx.draw_colored_polygon(PackedVector2Array([p + Vector2(0, -5), p + Vector2(5, 0), p + Vector2(0, 5), p + Vector2(-5, 0)]), CYAN)
 		_:
 			_stage_fx.draw_circle(p, 5.0, col)
 
@@ -1510,8 +1528,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_refresh_popover()
 			get_viewport().set_input_as_handled()
 			return
-		for rid in UV_REGIONS.keys():
-			if _uv_to_stage(UV_REGIONS[rid]).distance_to(stage_m) <= 26.0:
+		for r_item in _latest.get("regions", []):
+			var rid: String = r_item["id"]
+			if UV_REGIONS.has(rid) and _uv_to_stage(UV_REGIONS[rid]).distance_to(stage_m) <= (32.0 if rid == "paradox_core" else 26.0):
 				_on_region_clicked(rid)
 				get_viewport().set_input_as_handled()
 				return
@@ -1611,11 +1630,20 @@ func _on_state_changed(snap: Dictionary) -> void:
 	_bar_morale.max_value = int(snap["morale_cap"])
 	_bar_morale.value = _prev_morale
 	_bar_morale.add_theme_stylebox_override("fill", _flat_style(CRIMSON if low else CYAN, Color.TRANSPARENT, 0, 3))
-	_lbl_conquest.text = "统一 %d/6" % int(snap["conquered_count"])
+	if bool(snap.get("paradox_phase", false)):
+		var p_hp := 0
+		for r_chk in snap["regions"]:
+			if r_chk["id"] == "paradox_core":
+				p_hp = int(r_chk["hp"])
+		_lbl_conquest.text = "⚠ 焚书核心 %d/260" % p_hp
+		_lbl_conquest.modulate = CRIMSON
+	else:
+		_lbl_conquest.text = "统一 %d/6" % int(snap["conquered_count"])
+		_lbl_conquest.modulate = Color.WHITE
 	_lbl_patience.text = "%s始皇耐心 %d" % ["⚠ " if _prev_patience <= 3 else "", _prev_patience]
 	_lbl_patience.modulate = CRIMSON if _prev_patience <= 3 else MUTED
 	_crt_status.text = "TERMINAL_2076\n剩余行动点 %d\n剩余常规进攻 %d 次" % [int(snap["actions_left"]), int(snap["attack_left"])]
-	_vignette_mat.set_shader_parameter("danger_intensity", 1.0 if low else 0.0)
+	_vignette_mat.set_shader_parameter("danger_intensity", 1.0 if (low or bool(snap.get("paradox_phase", false))) else 0.0)
 
 	# 声音作为玩法信息源：第三幕切换紧张战鼓；民心 < 40 时起义喧哗随 (40 - 民心) 线性放大
 	if _bgm_player != null and not _audio_muted:
@@ -1800,7 +1828,10 @@ func _create_tactile_card(slot: int) -> Control:
 	var delta := -core.get_effective_advisor_cost(data) if advisor else core.get_effective_cheat_delta(data)
 	if delta < 0 and _latest.cyber_burn_turns > 0:
 		delta = 0
-	var badge := "★ 免费" if is_free else ("已部署" if card.bought else ("%+d" % delta if delta != 0 else "免耗"))
+	var is_corrupted: bool = (not card.bought) and bool(_latest.get("paradox_phase", false)) and (slot == int(_latest.get("corrupted_slot", -1)))
+	if is_corrupted:
+		delta -= 10
+	var badge := "★ 免费" if (is_free and not is_corrupted) else ("已部署" if card.bought else (("⚠ 污染 %+d" % delta) if is_corrupted else ("%+d" % delta if delta != 0 else "免耗")))
 	var disabled: bool = card.bought or _latest.actions_left <= 0 or (data.id == "education" and _latest.attack_left <= 0)
 	var active: bool = (slot == _pending_cheat_slot)
 
@@ -1813,13 +1844,13 @@ func _create_tactile_card(slot: int) -> Control:
 	frame.stretch_mode = TextureRect.STRETCH_SCALE
 	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	frame.modulate = Color(1.18, 1.12, 1.0, 1.0) if (active or is_free) else (Color(0.55, 0.55, 0.58, 0.72) if disabled else Color.WHITE)
+	frame.modulate = Color(1.25, 0.52, 0.52, 1.0) if is_corrupted else (Color(1.18, 1.12, 1.0, 1.0) if (active or is_free) else (Color(0.55, 0.55, 0.58, 0.72) if disabled else Color.WHITE))
 	root.add_child(frame)
 
 	var rim := ColorRect.new()
 	rim.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	rim.offset_left = 18; rim.offset_top = 12; rim.offset_right = -18; rim.offset_bottom = 15
-	rim.color = GOLD if is_free else tint
+	rim.color = CRIMSON if is_corrupted else (GOLD if is_free else tint)
 	rim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(rim)
 
@@ -2055,7 +2086,11 @@ func _refresh_popover() -> void:
 			var thr_note := ""
 			if not thr2.is_empty() and not bool(thr2.get("interrupted", false)) and thr2.get("region_id", "") == r["id"]:
 				thr_note = "\n⚠ 敌军意图【%s】：%s（攻击即破招+5民心）" % [thr2["title"], thr2["desc"]]
-			_pop_sub.text = "%s\n🎯 %s%s" % [lm_name, wk["label"], thr_note]
+			var lock_note := ""
+			var l_hp := int(r.get("boss_lock_hp", 0))
+			if l_hp > 0 and not bool(r.get("phase2_triggered", false)):
+				lock_note = "\n🛡 锁血二阶段：HP 降至 %d 触发反扑（抵消溢出伤害）" % l_hp
+			_pop_sub.text = "%s\n🎯 %s%s%s" % [lm_name, wk["label"], lock_note, thr_note]
 			_pop_attack.show()
 			_pop_attack.text = "⚔ 常规进攻 (−%d 战力)" % dmg
 			_pop_attack.disabled = not ready or _latest.attack_left <= 0 or _latest.education_turn
@@ -2175,7 +2210,10 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 		_ending_cg.texture = _tex_end_lose
 
 	var grade := "C · 历史回响"
-	if code == "win_sage" and final_morale >= 80:
+	var broke_paradox: bool = bool(final_state.get("paradox_defeated", false))
+	if code == "win_sage" and broke_paradox:
+		grade = "S+ · 破壁万世"
+	elif code == "win_sage" and final_morale >= 80:
 		grade = "S · 盛世千古"
 	elif code == "win_sage":
 		grade = "A · 守望大同"
@@ -2208,6 +2246,8 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 		achs.append("🏯 筑城守望(汤和)")
 	if _used_nuke:
 		achs.append("☢ 核平天下")
+	if won and broke_paradox:
+		achs.append("⚡ 破壁国师(击碎2076焚书协议)")
 	if won and adv_names.size() >= 2:
 		achs.append("👑 不朽双壁")
 	_ending_ach.text = "本局解锁勋章：" + ("  ".join(achs) if not achs.is_empty() else "尚无勋章（下次试试触发隐藏关或带名臣通关！）")
@@ -2246,6 +2286,40 @@ func _on_decree_completed(title: String, reward_text: String) -> void:
 func _on_weakness_hit(region_id: String, bonus_text: String) -> void:
 	if UV_REGIONS.has(region_id):
 		_spawn_float_text(_uv_to_stage(UV_REGIONS[region_id]) + Vector2(0, -56), "⚡ 弱点暴击 %s" % bonus_text, GOLD)
+
+
+func _on_boss_phase_triggered(region_id: String, title: String, desc: String) -> void:
+	_play_sfx("event")
+	_screen_flash(CRIMSON, 0.42, 0.45)
+	_shake_strength = maxf(_shake_strength, 14.0)
+	if UV_REGIONS.has(region_id):
+		_spawn_float_text(_uv_to_stage(UV_REGIONS[region_id]) + Vector2(0, -48), "⚠ 锁血二阶段 · %s" % title, CRIMSON)
+	_act_banner_title.text = "⚠ 锁血二阶段 · %s" % title
+	_act_banner_sub.text = desc
+	_act_banner.visible = true
+	_act_banner.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.22)
+	tw.tween_interval(2.6)
+	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(_act_banner.hide)
+	_lbl_ticker.text = "⚠ 【%s】%s" % [title, desc]
+
+
+func _on_paradox_awakened(info: Dictionary) -> void:
+	_play_sfx("event")
+	_screen_flash(CRIMSON, 0.65, 0.65)
+	_shake_strength = maxf(_shake_strength, 22.0)
+	_act_banner_title.text = "⚠ 警告：历史修正率 100% — 启动【2076 焚书协议】"
+	_act_banner_sub.text = "未来终端接管咸阳沙盘！核心(260血·半血锁血)现身中央，每回合污染手牌并反噬民心，击毁核心方能真通关！"
+	_act_banner.visible = true
+	_act_banner.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.25)
+	tw.tween_interval(4.2)
+	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.5)
+	tw.tween_callback(_act_banner.hide)
+	_lbl_ticker.text = "⚠ 【终幕·2076焚书协议】击毁中央终端核心(260血)！刷新终端可净化红色污染手牌，本回合攻击核心可使反噬减半！"
 
 
 func _on_debate_triggered(debate: Dictionary) -> void:

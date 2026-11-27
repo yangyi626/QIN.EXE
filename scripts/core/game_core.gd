@@ -16,6 +16,8 @@ signal debate_triggered(debate_data: Dictionary)
 signal weakness_hit(region_id: String, bonus_text: String)
 signal secret_card_gained(card: Dictionary)
 signal pact_made(title: String, desc: String)
+signal boss_phase_triggered(region_id: String, title: String, desc: String)
+signal paradox_awakened(info: Dictionary)
 
 var _data: Dictionary = {}
 var _lines: Dictionary = {}
@@ -40,6 +42,10 @@ var secret_overclock_active: bool = false
 var pact_used: bool = false
 var pact_morale_cap_penalty: int = 0
 var pact_free_hand_turn: bool = false
+var paradox_phase: bool = false
+var paradox_defeated: bool = false
+var paradox_hit_this_turn: bool = false
+var corrupted_slot: int = -1
 var turn: int = 1
 var patience: int = 12
 var morale: int = 60
@@ -101,6 +107,10 @@ func init_game(game_data: Dictionary, lines_data: Dictionary = {}, p_mvp_only: b
 	pact_used = false
 	pact_morale_cap_penalty = 0
 	pact_free_hand_turn = false
+	paradox_phase = false
+	paradox_defeated = false
+	paradox_hit_this_turn = false
+	corrupted_slot = -1
 	if rng_seed >= 0:
 		_rng.seed = rng_seed
 	else:
@@ -115,12 +125,16 @@ func init_game(game_data: Dictionary, lines_data: Dictionary = {}, p_mvp_only: b
 	refreshes_left = int(c.get("refreshes_per_turn", 3))
 	free_hook_available = true
 
+	var tactical_hp := {"steppe": 25, "west": 50, "south_asia": 85, "west_asia": 130, "europe": 220, "americas": 110}
 	regions.clear()
 	for r in _data.get("regions", []):
 		var copy: Dictionary = r.duplicate(true)
-		copy["max_hp"] = int(r["hp"])
-		copy["hp"] = int(r["hp"])
+		var base_hp := int(tactical_hp.get(r["id"], int(r["hp"]))) if tactical_mode else int(r["hp"])
+		copy["max_hp"] = base_hp
+		copy["hp"] = base_hp
 		copy["conquered"] = false
+		copy["phase2_triggered"] = false
+		copy["boss_lock_hp"] = int(ceil(float(base_hp) * 0.5)) if (tactical_mode and r["id"] in ["europe", "americas"]) else 0
 		regions.append(copy)
 
 	advisors.clear()
@@ -230,12 +244,14 @@ func get_morale_cap() -> int:
 func get_conquered_count() -> int:
 	var count := 0
 	for r in regions:
-		if r["conquered"]:
+		if r["conquered"] and not bool(r.get("is_paradox_boss", false)):
 			count += 1
 	return count
 
 
 func get_act() -> int:
+	if paradox_phase:
+		return 4
 	var c := get_conquered_count()
 	if c <= 1:
 		return 1
@@ -360,6 +376,9 @@ func get_snapshot() -> Dictionary:
 		"debate_next_mil_bonus": debate_next_mil_bonus,
 		"secret_cards": secret_cards.duplicate(true),
 		"secret_overclock_active": secret_overclock_active,
+		"paradox_phase": paradox_phase,
+		"paradox_defeated": paradox_defeated,
+		"corrupted_slot": corrupted_slot,
 		"pact_used": pact_used,
 		"pact_free_hand_turn": pact_free_hand_turn,
 		"game_over_code": game_over_code,
@@ -439,8 +458,10 @@ func refresh_terminal() -> Dictionary:
 			_modify_morale(5, "班昭续史明鉴", false)
 		if tactical_mode and has_synergy("hujia_guihan"):
 			_modify_morale(6, "胡笳归汉", false)
+		var purged := (corrupted_slot >= 0)
+		corrupted_slot = -1
 		_roll_terminal(false)
-		_log("终端刷新完成（%s）。" % ("免费" if cost == 0 else "-%d 民心" % cost))
+		_log("终端刷新完成（%s）%s。" % ["免费" if cost == 0 else "-%d 民心" % cost, "，已净化【焚书协议】手牌污染" if purged else ""])
 	_emit_state()
 	return {"ok": true, "cost": cost}
 
@@ -460,6 +481,10 @@ func summon_advisor(slot_index: int, replace_index: int = -1) -> Dictionary:
 
 	var adv: Dictionary = card["data"]
 	var cost := get_effective_advisor_cost(adv)
+	if paradox_phase and slot_index == corrupted_slot:
+		cost += 10
+		corrupted_slot = -1
+		_log("⚠ 强行启用【焚书协议】污染槽位，额外损耗 10 民心！")
 	if turn == 1 and free_hook_available:
 		free_hook_available = false
 
@@ -514,6 +539,10 @@ func buy_cheat(slot_index: int, target_region_id: String = "") -> Dictionary:
 			return {"ok": false, "error": "需要指定一个未占领的目标板块"}
 
 	var eff_delta := get_effective_cheat_delta(cheat)
+	if paradox_phase and slot_index == corrupted_slot:
+		eff_delta -= 10
+		corrupted_slot = -1
+		_log("⚠ 强行启用【焚书协议】污染槽位，额外损耗 10 民心！")
 	if turn == 1 and free_hook_available and cheat["id"] == "drone":
 		free_hook_available = false
 
@@ -669,6 +698,14 @@ func end_turn() -> Dictionary:
 		if game_over_code != "":
 			_emit_state()
 			return {"ok": true}
+		# 2076 焚书协议终极核心回合末反噬
+		if paradox_phase and not paradox_defeated:
+			var p_loss := 6 if paradox_hit_this_turn else 12
+			_modify_morale(-p_loss, "2076终端余波反噬" if paradox_hit_this_turn else "2076焚书协议反噬", false)
+			_log("⚠ 【2076 焚书协议】核心扫射沙盘：民心 -%d%s！" % [p_loss, "（本回合已压制减半）" if paradox_hit_this_turn else "（未攻击核心承受全额反噬）"])
+		if game_over_code != "":
+			_emit_state()
+			return {"ok": true}
 
 	if cyber_burn_turns > 0:
 		cyber_burn_turns -= 1
@@ -754,6 +791,7 @@ func force_region_conquered_for_test(region_id: String) -> void:
 
 # --- 内部结算逻辑 ---
 func _advance_to_next_turn() -> void:
+	paradox_hit_this_turn = false
 	turn += 1
 	patience -= 1
 	if patience <= 0:
@@ -823,7 +861,17 @@ func _advance_to_next_turn() -> void:
 
 	if tactical_mode and game_over_code == "":
 		_ensure_act_decree()
-		_roll_threat()
+		if paradox_phase and not paradox_defeated:
+			_corrupt_random_slot()
+			active_threat = {
+				"region_id": "paradox_core",
+				"type": "raid",
+				"title": "焚书协议清洗",
+				"desc": "回合结束未打断：民心 -10（汤和减半）",
+				"interrupted": false,
+			}
+		else:
+			_roll_threat()
 		_maybe_trigger_debate()
 
 
@@ -886,8 +934,26 @@ func _apply_damage(region_id: String, raw_damage: int, instant_kill: bool, sourc
 	var r := _find_region(region_id)
 	if r.is_empty() or r["conquered"]:
 		return {"ok": false, "error": "无效目标"}
-	var dmg := int(r["hp"]) if instant_kill else maxi(0, raw_damage)
-	r["hp"] = maxi(0, int(r["hp"]) - dmg)
+	var old_hp := int(r["hp"])
+	var dmg := old_hp if instant_kill else maxi(0, raw_damage)
+	if region_id == "paradox_core" and dmg > 0:
+		paradox_hit_this_turn = true
+	var interrupts: bool = tactical_mode and dmg > 0 and active_threat.get("region_id", "") == region_id and not bool(active_threat.get("interrupted", false))
+	if interrupts and dmg < old_hp and has_synergy("wushuang_zhanshen"):
+		dmg += 20
+		_log("⚔【无双战神】破招追击！对【%s】追加 20 点伤害。" % r["name"])
+	if interrupts and dmg < old_hp and has_advisor("fanlihua"):
+		dmg += 25
+		_log("⚔【樊梨花·奇门破阵】对【%s】追加 25 点穿甲伤害。" % r["name"])
+	var lock_hp := int(r.get("boss_lock_hp", 0))
+	var phase2_just_triggered := false
+	if tactical_mode and lock_hp > 0 and not bool(r.get("phase2_triggered", false)) and (old_hp - dmg <= lock_hp):
+		r["hp"] = lock_hp
+		r["phase2_triggered"] = true
+		dmg = maxi(0, old_hp - lock_hp)
+		phase2_just_triggered = true
+	else:
+		r["hp"] = maxi(0, old_hp - dmg)
 	var conquered_now := false
 	if r["hp"] == 0:
 		r["conquered"] = true
@@ -898,25 +964,12 @@ func _apply_damage(region_id: String, raw_damage: int, instant_kill: bool, sourc
 			_modify_morale(6, "妇好凯旋", false)
 		if has_advisor("fanlihua"):
 			_modify_morale(10, "樊梨花凯旋", false)
-	if tactical_mode and dmg > 0 and not active_threat.is_empty() and not bool(active_threat.get("interrupted", false)) and active_threat.get("region_id", "") == region_id:
+	if interrupts:
 		active_threat["interrupted"] = true
 		_modify_morale(5, "破招打断敌军意图", false)
 		_log("⚡ 破招打断【%s】！民心 +5。" % active_threat["title"])
 		interrupt_count += 1
 		threat_interrupted.emit(region_id, "破招成功！民心 +5")
-		if has_synergy("wushuang_zhanshen") and not conquered_now:
-			r["hp"] = maxi(0, int(r["hp"]) - 20)
-			if r["hp"] == 0:
-				r["conquered"] = true
-				conquered_now = true
-			_log("⚔【无双战神】破招追击！对【%s】额外造成 20 点反击重伤！" % r["name"])
-		if has_advisor("fanlihua") and not conquered_now:
-			r["hp"] = maxi(0, int(r["hp"]) - 25)
-			if r["hp"] == 0:
-				r["conquered"] = true
-				conquered_now = true
-				_modify_morale(10, "樊梨花凯旋", false)
-			_log("⚔【樊梨花·奇门破阵】破招穿甲！对【%s】额外造成 25 点伤害！" % r["name"])
 		if interrupt_count >= 2 and not _interrupt_milestone_given:
 			_interrupt_milestone_given = true
 			_grant_secret_card("连破敌招")
@@ -924,11 +977,102 @@ func _apply_damage(region_id: String, raw_damage: int, instant_kill: bool, sourc
 		attack_left += 1
 		_log("【%s】乘胜追击！额外获得 1 次免费常规进攻！" % ("巾帼兵仙" if has_synergy("jinguo_bingxian") else "兵仙冠军"))
 	strike_performed.emit(region_id, dmg, source, conquered_now)
-	if conquered_now and get_conquered_count() >= 6:
+	if phase2_just_triggered:
+		_trigger_boss_phase2(r)
+	if conquered_now and region_id == "paradox_core":
+		paradox_defeated = true
+		corrupted_slot = -1
+		_log("✦ 【2076 焚书终端核心】彻底粉碎！你打破了时空闭环，成就真正的万世国师！")
 		_trigger_ending("win_sage" if morale >= 60 else "win_tyrant")
+	elif conquered_now and get_conquered_count() >= 6:
+		if tactical_mode and not paradox_phase and not paradox_defeated:
+			_awaken_paradox_boss()
+		else:
+			_trigger_ending("win_sage" if morale >= 60 else "win_tyrant")
 	elif tactical_mode:
 		_check_decree_progress()
 	return {"ok": true, "damage": dmg, "conquered": conquered_now}
+
+
+func _trigger_boss_phase2(r: Dictionary) -> void:
+	var rid: String = r["id"]
+	var title := "二阶段铁壁"
+	var desc := "锁血抵消溢出伤害并立刻反扑！"
+	if rid == "europe":
+		title = "罗马龟甲铁壁"
+		desc = "锁血 110 抵消溢出伤害！民心 -8，冻结 1 次终端刷新，并立刻发起反扑！"
+		_modify_morale(-8, "罗马龟甲铁壁反扑", false)
+		refreshes_left = maxi(0, refreshes_left - 1)
+		active_threat = {
+			"region_id": "europe",
+			"type": "raid",
+			"title": "罗马龟甲反扑",
+			"desc": "回合结束未打断：民心 -10（汤和减半）",
+			"interrupted": false,
+		}
+	elif rid == "americas":
+		title = "跨海飓风风暴"
+		desc = "锁血 55 抵消溢出伤害！民心 -10，大洋风暴直指楼船航线，需立刻破招！"
+		_modify_morale(-10, "跨海飓风反噬", false)
+		active_threat = {
+			"region_id": "americas",
+			"type": "sabotage",
+			"title": "大洋飓风反噬",
+			"desc": "回合结束未打断：下回合行动 -1",
+			"interrupted": false,
+		}
+	elif rid == "paradox_core":
+		title = "时空回溯·协议过载"
+		desc = "锁血 130 抵消溢出伤害！民心 -10，并立刻重新污染 1 张终端手牌！"
+		_modify_morale(-10, "焚书协议过载", false)
+		_corrupt_random_slot()
+	_log("⚠ 【%s】触发二阶段【%s】：%s" % [r["name"], title, desc])
+	boss_phase_triggered.emit(rid, title, desc)
+
+
+func _corrupt_random_slot() -> void:
+	var open_slots: Array[int] = []
+	for i in range(terminal_cards.size()):
+		if not bool(terminal_cards[i].get("bought", false)):
+			open_slots.append(i)
+	if open_slots.is_empty():
+		corrupted_slot = -1
+	else:
+		corrupted_slot = open_slots[_rng.randi_range(0, open_slots.size() - 1)]
+
+
+func _awaken_paradox_boss() -> void:
+	paradox_phase = true
+	paradox_hit_this_turn = false
+	if patience < 4:
+		patience = 4
+	var core_boss := {
+		"id": "paradox_core",
+		"name": "2076·焚书终端核心",
+		"coverage": "2076 悖论终端",
+		"landmark_name": "焚书协议核心矩阵",
+		"reward": "击碎时空闭环，成就真正的万世国师",
+		"efficiency": 1.0,
+		"hp": 260,
+		"max_hp": 260,
+		"prereq": "",
+		"requires_sea": false,
+		"conquered": false,
+		"boss_lock_hp": 130,
+		"phase2_triggered": false,
+		"is_paradox_boss": true,
+	}
+	regions.append(core_boss)
+	_corrupt_random_slot()
+	active_threat = {
+		"region_id": "paradox_core",
+		"type": "raid",
+		"title": "焚书协议清洗",
+		"desc": "回合结束未打断：民心 -10（汤和减半）",
+		"interrupted": false,
+	}
+	_log("⚠ 警告：历史修正率 100%！2076 未来终端启动【焚书协议】，终极核心(260血)降临沙盘中央！")
+	paradox_awakened.emit({"hp": 260, "patience": patience, "corrupted_slot": corrupted_slot})
 
 
 func _trigger_ending(code: String) -> void:
