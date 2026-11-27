@@ -125,6 +125,7 @@ var _bar_morale: ProgressBar
 var _lbl_conquest: Label
 var _lbl_patience: Label
 var _buffs_box: HBoxContainer
+var _threat_label: Label
 var _lbl_ticker: Label
 var _btn_refresh: Button
 var _btn_fleet: Button
@@ -568,11 +569,21 @@ func _build_stage_and_ui() -> void:
 	_lbl_conquest = _label(th, "", 13, GOLD)
 	_lbl_patience = _label(th, "", 13, MUTED)
 
+	var status_rows := VBoxContainer.new()
+	status_rows.position = Vector2(14, 60)
+	status_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	status_rows.add_theme_constant_override("separation", 4)
+	add_child(status_rows)
 	_buffs_box = HBoxContainer.new()
-	_buffs_box.position = Vector2(14, 60)
 	_buffs_box.add_theme_constant_override("separation", 6)
 	_buffs_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_buffs_box)
+	status_rows.add_child(_buffs_box)
+	_threat_label = _label(status_rows, "", 13, Color.WHITE, false)
+	_threat_label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_threat_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_threat_label.add_theme_color_override("font_color", Color("#ffb5aa"))
+	_threat_label.add_theme_stylebox_override("normal", _flat_style(Color("#231419"), CRIMSON, 6, 5))
+	_threat_label.hide()
 
 	var util := HBoxContainer.new()
 	util.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
@@ -1300,11 +1311,6 @@ func _draw_stage_fx() -> void:
 			if not thr.is_empty() and not bool(thr.get("interrupted", false)) and thr.get("region_id", "") == rid:
 				var tpulse := 18.0 + 4.5 * sin(_anim_time * 7.5)
 				_stage_fx.draw_arc(p, tpulse, 0.0, TAU, 28, CRIMSON, 2.4, true)
-				var ttxt := "⚠ %s · 攻打破招!" % str(thr.get("title", "敌军异动"))
-				var tsz := font.get_string_size(ttxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
-				var tpos2 := p + Vector2(-tsz.x * 0.5, rad + 22.0)
-				_stage_fx.draw_string(font, tpos2 + Vector2(1, 1), ttxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0, 0, 0, 0.95))
-				_stage_fx.draw_string(font, tpos2, ttxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, CRIMSON)
 
 			# 受损板块自动显示极简迷你血条（一眼掌握战局）
 			var hp: int = int(r["hp"])
@@ -1662,6 +1668,14 @@ func _on_state_changed(snap: Dictionary) -> void:
 				_uprising_player.stop()
 
 	_refresh_buff_pills(snap)
+	_threat_label.hide()
+	var threat: Dictionary = snap.get("active_threat", {})
+	if not threat.is_empty() and not threat.get("interrupted", false) and snap.game_over_code == "":
+		for region in snap.regions:
+			if region.id == threat.region_id and not region.conquered:
+				_threat_label.text = "⚠ %s · 攻打「%s」破招" % [threat.title, region.name]
+				_threat_label.show()
+				break
 
 	# 更新两位全息名臣立绘及悬停技能提示
 	var advs: Array = snap["advisors"]
