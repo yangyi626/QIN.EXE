@@ -80,6 +80,18 @@ var _shake_strength: float = 0.0
 var _projectiles: Array[Dictionary] = []
 var _pulses: Array[Dictionary] = []
 var _embers: Array[Dictionary] = []
+var _sparks: Array[Dictionary] = []
+var _hp_ghost: Dictionary = {}
+var _hitstop_timer: float = 0.0
+var _emperor_glare_timer: float = 0.0
+var _crt_glitch_timer: float = 0.0
+var _hovered_prop: String = ""
+
+# 拖拽甩牌状态（兼容点击与快捷键）
+var _drag_slot: int = -1
+var _drag_start_pos: Vector2 = Vector2.ZERO
+var _drag_active: bool = false
+
 
 # 音频系统
 var _audio_muted: bool = false
@@ -419,7 +431,7 @@ func _build_stage_and_ui() -> void:
 		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		tr.size = Vector2(186, 186)
 		tr.visible = false
-		tr.mouse_filter = Control.MOUSE_FILTER_STOP
+		tr.mouse_filter = Control.MOUSE_FILTER_PASS
 		tr.mouse_default_cursor_shape = Control.CURSOR_HELP
 		var sm := ShaderMaterial.new()
 		sm.shader = holo_shader
@@ -1152,7 +1164,15 @@ func _layout_dynamic_elements() -> void:
 
 
 func _process(delta: float) -> void:
+	if _hitstop_timer > 0.0:
+		_hitstop_timer = maxf(0.0, _hitstop_timer - delta)
+		_stage_fx.queue_redraw()
+		return
 	_anim_time += delta
+	if _emperor_glare_timer > 0.0:
+		_emperor_glare_timer = maxf(0.0, _emperor_glare_timer - delta)
+	if _crt_glitch_timer > 0.0:
+		_crt_glitch_timer = maxf(0.0, _crt_glitch_timer - delta)
 	var vp := get_viewport_rect().size
 	if vp.x > 0 and vp.y > 0:
 		var m := get_viewport().get_mouse_position()
@@ -1179,6 +1199,29 @@ func _process(delta: float) -> void:
 							break
 		_hovered_region = found
 		_hovered_hidden = found_h
+		var found_prop := ""
+		if found == "" and found_h == "" and not _modal_shade.visible and not _title_curtain.visible and not _drag_active:
+			found_prop = _tabletop_prop_at(stage_m)
+		_hovered_prop = found_prop
+
+	# 拖拽中的卡牌实时跟随指针并带物理倾斜
+	if _drag_active and _drag_slot >= 0 and _drag_slot < _card_nodes.size():
+		var dn := _card_nodes[_drag_slot]
+		var mpos := get_viewport().get_mouse_position()
+		var card_info: Dictionary = _latest.terminal_cards[_drag_slot] if _drag_slot < _latest.get("terminal_cards", []).size() else {}
+		var is_targeted: bool = (not card_info.is_empty()) and card_info.kind == "cheat" and bool(card_info.data.get("needs_target", false))
+		if is_targeted:
+			var anchor := _card_base_pos[_drag_slot] + Vector2(0, -48) if _drag_slot < _card_base_pos.size() else dn.position
+			dn.position = dn.position.lerp(anchor, minf(1.0, delta * 18.0))
+			dn.rotation_degrees = lerpf(dn.rotation_degrees, 0.0, minf(1.0, delta * 16.0))
+			dn.scale = dn.scale.lerp(Vector2(1.1, 1.1), minf(1.0, delta * 16.0))
+		else:
+			var target_p := mpos - dn.size * 0.5
+			var vx := target_p.x - dn.position.x
+			dn.position = dn.position.lerp(target_p, minf(1.0, delta * 24.0))
+			dn.rotation_degrees = lerpf(dn.rotation_degrees, clampf(vx * 0.25, -18.0, 18.0), minf(1.0, delta * 16.0))
+			var ready_drop := mpos.y < vp.y * 0.72
+			dn.scale = dn.scale.lerp(Vector2(1.12, 1.12) if ready_drop else Vector2(1.05, 1.05), minf(1.0, delta * 16.0))
 
 	# 选中板块或咸阳时平滑推近镜头聚焦该大陆，取消选中时柔和拉回全景
 	var target_zoom := 1.0
@@ -1219,12 +1262,31 @@ func _process(delta: float) -> void:
 
 	for idx in range(_projectiles.size() - 1, -1, -1):
 		var pr: Dictionary = _projectiles[idx]
-		pr["t"] = float(pr["t"]) + delta / 0.28
+		pr["t"] = float(pr["t"]) + delta / 0.24
 		if float(pr["t"]) >= 1.0:
-			_pulses.append({"pos": pr["end"], "col": pr["col"], "t": 0.0, "max_r": 96.0 if pr["big"] else 46.0})
+			_pulses.append({"pos": pr["end"], "col": pr["col"], "t": 0.0, "max_r": 108.0 if pr["big"] else 54.0})
+			_spawn_sparks(pr["end"], pr["col"], 28 if pr["big"] else 14, 240.0 if pr["big"] else 155.0)
 			if pr.get("triple", false):
-				_pulses.append({"pos": pr["end"], "col": Color.WHITE, "t": -0.12, "max_r": 128.0})
+				_pulses.append({"pos": pr["end"], "col": Color.WHITE, "t": -0.10, "max_r": 146.0})
+				_spawn_sparks(pr["end"], GOLD, 36, 320.0)
 			_projectiles.remove_at(idx)
+	for idx in range(_sparks.size() - 1, -1, -1):
+		var sp: Dictionary = _sparks[idx]
+		sp["life"] = float(sp["life"]) + delta / float(sp["dur"])
+		if float(sp["life"]) >= 1.0:
+			_sparks.remove_at(idx)
+		else:
+			var vel: Vector2 = sp["vel"]
+			vel.y += float(sp.get("grav", 220.0)) * delta
+			sp["vel"] = vel
+			sp["pos"] = Vector2(sp["pos"]) + vel * delta
+	for r_gh in _latest.get("regions", []):
+		var gid: String = r_gh["id"]
+		var cur_hp := float(r_gh["hp"])
+		if not _hp_ghost.has(gid) or float(_hp_ghost[gid]) < cur_hp:
+			_hp_ghost[gid] = cur_hp
+		else:
+			_hp_ghost[gid] = lerpf(float(_hp_ghost[gid]), cur_hp, minf(1.0, delta * 3.4))
 	for idx in range(_pulses.size() - 1, -1, -1):
 		var pu: Dictionary = _pulses[idx]
 		pu["t"] = float(pu["t"]) + delta / 0.54
@@ -1248,11 +1310,25 @@ func _draw_stage_fx() -> void:
 	var patience: int = int(_latest.get("patience", 12))
 	var low := morale < 40
 
-	# 0. 高台秦始皇压迫感呼吸光晕（耐心 <= 3 时转为猩红威压）
+	# 0. 高台秦始皇压迫感呼吸光晕 + 帝王瞳光（低民心/终幕/点击时骤亮）
 	var epos := _uv_to_stage(UV_EMPEROR)
-	var e_urgent := patience <= 3
+	var e_urgent := patience <= 3 or bool(_latest.get("paradox_phase", false))
 	var e_col := CRIMSON if e_urgent else Color("#8f6b2e")
 	var e_pulse := 0.5 + 0.5 * sin(_anim_time * (4.2 if e_urgent else 1.4))
+	if e_urgent or low or _emperor_glare_timer > 0.0 or _hovered_prop == "emperor":
+		var eye_col := CRIMSON if (e_urgent or low) else GOLD
+		var eye_a := clampf((0.55 + 0.45 * e_pulse) if (e_urgent or low) else (0.95 if _emperor_glare_timer > 0.0 else 0.55), 0.25, 1.0)
+		var eye_l := epos + Vector2(-9.5, -16.0)
+		var eye_r := epos + Vector2(9.5, -16.0)
+		_stage_fx.draw_circle(eye_l, 7.5, Color(eye_col, eye_a * 0.28))
+		_stage_fx.draw_circle(eye_r, 7.5, Color(eye_col, eye_a * 0.28))
+		_stage_fx.draw_circle(eye_l, 2.6, Color(eye_col, eye_a))
+		_stage_fx.draw_circle(eye_r, 2.6, Color(eye_col, eye_a))
+	if _crt_glitch_timer > 0.0:
+		var crt_p := _uv_to_stage(UV_CRT)
+		for gi in range(4):
+			var gy := crt_p.y - 32.0 + float(gi) * 18.0 + randf_range(-4.0, 4.0)
+			_stage_fx.draw_line(Vector2(crt_p.x - 52.0, gy), Vector2(crt_p.x + 52.0, gy), Color(CYAN, 0.55), 2.0)
 	_stage_fx.draw_circle(epos, 78.0 + 14.0 * e_pulse, Color(e_col, 0.12 if e_urgent else 0.045))
 
 	# 1. 左侧青铜鼎动态火光脉动 + 全场烛火飘散火星
@@ -1282,13 +1358,17 @@ func _draw_stage_fx() -> void:
 		_stage_fx.draw_string(theme.default_font, cap + Vector2(-csz.x * 0.5, -19), ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, GOLD)
 
 	var font := theme.default_font
+	var active_aim_slot := _pending_cheat_slot
+	if _drag_active and _drag_slot >= 0 and _drag_slot < _latest.terminal_cards.size():
+		var dragged: Dictionary = _latest.terminal_cards[_drag_slot]
+		active_aim_slot = _drag_slot if dragged.kind == "cheat" and dragged.data.needs_target else -1
 	for r in _latest.regions:
 		var rid: String = r["id"]
 		if not UV_REGIONS.has(rid):
 			continue
 		var p := _uv_to_stage(UV_REGIONS[rid])
 		var conquered: bool = bool(r["conquered"])
-		var can_hit: bool = _pending_cheat_slot >= 0 or core.can_attack_region(rid)
+		var can_hit: bool = active_aim_slot >= 0 or core.can_attack_region(rid)
 		var is_hov: bool = (rid == _hovered_region or rid == _selected)
 		var is_boss_core: bool = (rid == "paradox_core")
 		var col := GOLD if conquered else (CRIMSON if is_boss_core else (CYAN if can_hit else Color("#8f8370")))
@@ -1325,21 +1405,38 @@ func _draw_stage_fx() -> void:
 				var bw := 48.0 if is_boss_core else 36.0
 				var bx := p.x - bw * 0.5
 				var by := p.y + rad + 5.0
-				_stage_fx.draw_rect(Rect2(bx, by, bw, 4.5), Color(0.05, 0.07, 0.09, 0.92))
-				_stage_fx.draw_rect(Rect2(bx, by, bw * (float(hp) / float(max_hp)), 4.5), col)
+				_stage_fx.draw_rect(Rect2(bx, by, bw, 5.0), Color(0.05, 0.07, 0.09, 0.92))
+				var gh_hp := float(_hp_ghost.get(rid, float(hp)))
+				if gh_hp > float(hp):
+					_stage_fx.draw_rect(Rect2(bx, by, bw * clampf(gh_hp / float(max_hp), 0.0, 1.0), 5.0), Color(CRIMSON, 0.85))
+				_stage_fx.draw_rect(Rect2(bx, by, bw * (float(hp) / float(max_hp)), 5.0), col)
 				if has_lock_shield:
 					var lx := bx + bw * (float(lock_hp) / float(max_hp))
 					_stage_fx.draw_line(Vector2(lx, by - 2.0), Vector2(lx, by + 6.5), GOLD, 2.0)
 
 			if is_hov or can_hit:
 				var tag := "%s %d" % [r["name"], hp]
-				if _pending_cheat_slot >= 0 and is_hov:
-					var dmg := _card_damage(_latest.terminal_cards[_pending_cheat_slot].data, hp)
-					tag += " → %d" % maxi(0, hp - dmg)
+				var tag_col := GOLD if is_hov else Color("#d9f8ff")
+				if is_hov:
+					var est_dmg := 0
+					if active_aim_slot >= 0 and active_aim_slot < _latest.terminal_cards.size():
+						est_dmg = _card_damage(_latest.terminal_cards[active_aim_slot].data, hp)
+					elif not _drag_active and not _latest.education_turn and core.can_attack_region(rid) and _latest.attack_left > 0:
+						var eff_p := 1.0 if (rid == "south_asia" and bool(_latest.get("penicillin_turn", false))) else float(r.get("efficiency", 1.0))
+						est_dmg = floori(eff_p * float(_latest.get("conventional_power", 15)))
+					if est_dmg > 0:
+						if has_lock_shield and (hp - est_dmg <= lock_hp):
+							tag += " → 🛡锁血%d!" % lock_hp
+							tag_col = CRIMSON
+						elif est_dmg >= hp:
+							tag += " → 💀一击攻克!"
+							tag_col = GOLD
+						else:
+							tag += " → 约%d" % (hp - est_dmg)
 				var tsize := font.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 13)
 				var tpos := p + Vector2(-tsize.x * 0.5, -rad - 8.0)
 				_stage_fx.draw_string(font, tpos + Vector2(1, 1), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0, 0, 0, 0.95))
-				_stage_fx.draw_string(font, tpos, tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, GOLD if is_hov else Color("#d9f8ff"))
+				_stage_fx.draw_string(font, tpos, tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, tag_col)
 
 	# 3. 三大隐藏关异常微光点（支持沙盘直接悬停辨识与点击触发「望」）
 	var hvis: Dictionary = _latest.get("hidden_visible", {})
@@ -1379,9 +1476,50 @@ func _draw_stage_fx() -> void:
 		var alpha: float = (1.0 - t) * 0.85
 		_stage_fx.draw_arc(pu["pos"], r_now, 0.0, TAU, 32, Color(pu["col"], alpha), 3.0 * (1.0 - t) + 1.0, true)
 
-	# 5. 瞄准指向卡动态战术弧线
-	if _pending_cheat_slot >= 0 and _pending_cheat_slot < _card_nodes.size():
-		var card_n := _card_nodes[_pending_cheat_slot]
+	# 4b. 命中爆散火花粒子
+	for sp in _sparks:
+		var sl := clampf(float(sp["life"]), 0.0, 1.0)
+		var sa := 1.0 - sl
+		var sr := lerpf(float(sp.get("rad", 3.6)), 0.8, sl)
+		var spos: Vector2 = sp["pos"]
+		var svel: Vector2 = sp["vel"]
+		_stage_fx.draw_line(spos, spos - svel * 0.025, Color(sp["col"], sa * 0.75), maxf(1.2, sr * 0.8), true)
+		_stage_fx.draw_circle(spos, sr, Color(sp["col"], sa))
+
+	# 4c. 活物桌面物件悬停微光提示
+	if _hovered_prop != "":
+		var p_pos := Vector2.ZERO
+		var p_hint := ""
+		var p_col := GOLD
+		if _hovered_prop == "crt":
+			p_pos = _uv_to_stage(UV_CRT)
+			p_hint = "⚡ 点击终端：快捷刷新 (%d/3)" % int(_latest.get("refreshes_left", 0))
+			p_col = CYAN
+		elif _hovered_prop == "cauldron":
+			p_pos = _uv_to_stage(UV_CAULDRON)
+			p_hint = "🔥 点击青铜鼎：拨旺咸阳炉火"
+			p_col = GOLD
+		elif _hovered_prop == "emperor":
+			p_pos = _uv_to_stage(UV_EMPEROR)
+			p_hint = "👑 点击始皇：聆听大秦御旨"
+			p_col = CRIMSON if (patience <= 3 or low) else GOLD
+		elif _hovered_prop.begins_with("advisor_"):
+			var ai := int(_hovered_prop.substr(8))
+			if ai < UV_ADVISORS.size() and ai < _latest.get("advisors", []).size():
+				p_pos = _uv_to_stage(UV_ADVISORS[ai])
+				p_hint = "💬 点击【%s】：聆听建言" % _latest["advisors"][ai]["name"]
+				p_col = CYAN
+		if p_hint != "":
+			var pr_rad := 34.0 + 4.0 * sin(_anim_time * 5.0)
+			_stage_fx.draw_arc(p_pos, pr_rad, 0.0, TAU, 28, Color(p_col, 0.45), 1.8, true)
+			var hsz2 := font.get_string_size(p_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 13)
+			var hpos2 := p_pos + Vector2(-hsz2.x * 0.5, -pr_rad - 10.0)
+			_stage_fx.draw_string(font, hpos2 + Vector2(1, 1), p_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0, 0, 0, 0.95))
+			_stage_fx.draw_string(font, hpos2, p_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, p_col)
+
+	# 5. 瞄准或拖拽指向卡动态战术弧线
+	if active_aim_slot >= 0 and active_aim_slot < _card_nodes.size():
+		var card_n := _card_nodes[active_aim_slot]
 		var start_p := (card_n.position + Vector2(card_n.size.x * 0.5, 10.0) - _stage.position) / maxf(0.5, _stage.scale.x)
 		var end_p := (get_viewport().get_mouse_position() - _stage.position) / maxf(0.5, _stage.scale.x)
 		var snapped := false
@@ -1442,6 +1580,145 @@ func _draw_mini_landmark(p: Vector2, id: String, col: Color) -> void:
 			_stage_fx.draw_colored_polygon(PackedVector2Array([p + Vector2(0, -5), p + Vector2(5, 0), p + Vector2(0, 5), p + Vector2(-5, 0)]), CYAN)
 		_:
 			_stage_fx.draw_circle(p, 5.0, col)
+
+
+func _input(event: InputEvent) -> void:
+	if _drag_slot < 0:
+		return
+	if event is InputEventMouseMotion:
+		if not _drag_active and event.position.distance_to(_drag_start_pos) >= 16.0:
+			_drag_active = true
+			_popover.hide()
+			if _drag_slot < _card_nodes.size():
+				_card_nodes[_drag_slot].z_index = 40
+			_play_sfx("hover")
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		var slot := _drag_slot
+		var was_drag := _drag_active
+		_drag_slot = -1
+		_drag_active = false
+		if was_drag:
+			_finish_card_drag(slot, event.position)
+			get_viewport().set_input_as_handled()
+
+
+func _finish_card_drag(slot: int, drop_pos: Vector2) -> void:
+	if slot < 0 or slot >= _latest.get("terminal_cards", []).size():
+		_rebuild_hand_cards(false)
+		return
+	var card: Dictionary = _latest.terminal_cards[slot]
+	var vp := get_viewport_rect().size
+	if _modal_shade.visible or _title_curtain.visible or card.bought or _latest.actions_left <= 0:
+		_rebuild_hand_cards(false)
+		return
+	var is_targeted: bool = card.kind == "cheat" and bool(card.data.get("needs_target", false))
+	if is_targeted:
+		var stage_pos := _stage.get_global_transform().affine_inverse() * drop_pos
+		for region in _latest.regions:
+			var rid: String = region.id
+			if region.conquered or not UV_REGIONS.has(rid):
+				continue
+			var target := _uv_to_stage(UV_REGIONS[rid])
+			if target.distance_to(stage_pos) <= (32.0 if rid == "paradox_core" else 26.0):
+				_pending_cheat_slot = -1
+				_play_sfx("click")
+				_spawn_sparks(target, GOLD, 16, 170.0)
+				_result(core.buy_cheat(slot, rid))
+				return
+		_rebuild_hand_cards(false)
+	else:
+		if drop_pos.y < vp.y * 0.72:
+			_spawn_sparks(_uv_to_stage(UV_XIANYANG), GOLD if card.kind == "advisor" else CYAN, 22, 200.0)
+			_use_card(slot)
+			if _replace_panel.visible:
+				_rebuild_hand_cards(false)
+		else:
+			_rebuild_hand_cards(false)
+
+
+func _spawn_sparks(stage_pos: Vector2, col: Color, count: int = 16, speed: float = 180.0, grav: float = 220.0) -> void:
+	for i in range(count):
+		var ang := randf_range(0.0, TAU)
+		var spd := randf_range(speed * 0.35, speed * 1.15)
+		_sparks.append({
+			"pos": stage_pos + Vector2(randf_range(-6, 6), randf_range(-6, 6)),
+			"vel": Vector2(cos(ang), sin(ang)) * spd + Vector2(0, -45.0),
+			"col": col if randf() > 0.25 else Color.WHITE,
+			"life": 0.0,
+			"dur": randf_range(0.32, 0.62),
+			"rad": randf_range(2.2, 4.4),
+			"grav": grav,
+		})
+
+
+func _tabletop_prop_at(stage_pos: Vector2) -> String:
+	for ai in range(mini(UV_ADVISORS.size(), _latest.advisors.size())):
+		if _uv_to_stage(UV_ADVISORS[ai]).distance_to(stage_pos) <= 64.0:
+			return "advisor_%d" % ai
+	if _uv_to_stage(UV_CRT).distance_to(stage_pos) <= 68.0:
+		return "crt"
+	if _uv_to_stage(UV_CAULDRON).distance_to(stage_pos) <= 58.0:
+		return "cauldron"
+	if _uv_to_stage(UV_EMPEROR).distance_to(stage_pos) <= 62.0:
+		return "emperor"
+	return ""
+
+func _interact_tabletop_prop(prop: String) -> void:
+	if prop == "cauldron":
+		_play_sfx("hover")
+		var cp := _uv_to_stage(UV_CAULDRON)
+		_spawn_sparks(cp + Vector2(0, -16), Color("#ff9c3b"), 28, 190.0, -140.0)
+		_pulses.append({"pos": cp, "col": GOLD, "t": 0.0, "max_r": 72.0})
+		_screen_flash(Color("#ff9c3b"), 0.14, 0.24)
+		_lbl_ticker.text = "🔥 咸阳青铜鼎火光大盛，照彻玄黑沙盘！"
+	elif prop == "emperor":
+		_play_sfx("event")
+		_emperor_glare_timer = 2.6
+		_shake_strength = maxf(_shake_strength, 6.5)
+		var ep := _uv_to_stage(UV_EMPEROR)
+		var urgent := int(_latest.get("patience", 12)) <= 3 or bool(_latest.get("paradox_phase", false))
+		_spawn_sparks(ep, CRIMSON if urgent else GOLD, 20, 160.0, 40.0)
+		var emp_lines := [
+			"「国师，朕给你的十二回合，可不是让你在殿上观火的。」",
+			"「六合之内，皇帝之土。何处未染玄黑，便向何处亮剑！」",
+			"「善用名臣羁绊，莫让万民离心，亦莫让朕久等。」",
+		]
+		if bool(_latest.get("paradox_phase", false)):
+			emp_lines = ["「2076 终端竟敢反噬大秦？国师，给朕轰碎它！」"]
+		elif int(_latest.get("morale", 60)) < 40:
+			emp_lines = ["「民心已动摇！速行民生安抚，否则大泽乡之火将焚尽咸阳！」"]
+		var pick: String = emp_lines[randi() % emp_lines.size()]
+		_spawn_float_text(ep + Vector2(0, 32), "👑 始皇凝视", CRIMSON if urgent else GOLD)
+		_lbl_ticker.text = "【秦始皇】%s" % pick
+	elif prop == "crt":
+		_crt_glitch_timer = 0.45
+		var crt_p := _uv_to_stage(UV_CRT)
+		_spawn_sparks(crt_p, CYAN, 18, 175.0, 80.0)
+		if not _btn_refresh.disabled:
+			_play_sfx("click")
+			_cancel_aim()
+			_result(core.refresh_terminal())
+		else:
+			_play_sfx("hover")
+			_lbl_ticker.text = "⚡ [TERMINAL_2076] 显像管发出滋滋电流声：本回合刷新额度已耗尽。"
+	elif prop.begins_with("advisor_"):
+		var ai := int(prop.substr(8))
+		var advs: Array = _latest.get("advisors", [])
+		if ai >= 0 and ai < advs.size():
+			var adv: Dictionary = advs[ai]
+			_play_sfx("chime")
+			var ap := _uv_to_stage(UV_ADVISORS[ai])
+			_spawn_sparks(ap, CYAN if ai == 0 else GOLD, 16, 150.0, 60.0)
+			if ai < _holo_rects.size():
+				var hr := _holo_rects[ai]
+				hr.pivot_offset = hr.size * 0.5
+				var tw := hr.create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+				tw.tween_property(hr, "scale", Vector2(1.16, 0.90), 0.08)
+				tw.tween_property(hr, "scale", Vector2(0.95, 1.08), 0.10)
+				tw.tween_property(hr, "scale", Vector2.ONE, 0.12)
+			var bucket := "low_morale" if int(_latest.get("morale", 60)) < 45 else "normal"
+			var line := core._get_advisor_line(adv["id"], bucket)
+			_on_advisor_spoke(adv["id"], adv["name"], line)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1540,6 +1817,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				_on_region_clicked(rid)
 				get_viewport().set_input_as_handled()
 				return
+		var prop := _tabletop_prop_at(stage_m)
+		if prop != "":
+			_interact_tabletop_prop(prop)
+			get_viewport().set_input_as_handled()
+			return
 		if _popover.visible and not _popover.get_global_rect().has_point(event.position):
 			_selected = ""
 			_popover.hide()
@@ -1555,6 +1837,13 @@ func _restart(show_banner: bool = true) -> void:
 	_prev_act = 0
 	_last_cards_sig = ""
 	_hidden_triggered_count = 0
+	_sparks.clear()
+	_hp_ghost.clear()
+	_hitstop_timer = 0.0
+	_emperor_glare_timer = 0.0
+	_crt_glitch_timer = 0.0
+	_drag_slot = -1
+	_drag_active = false
 	_used_nuke = false
 	_popover.hide()
 	_ending_panel.hide()
@@ -1756,6 +2045,8 @@ func _refresh_buff_pills(snap: Dictionary) -> void:
 
 
 func _rebuild_hand_cards(animate_deal: bool = false) -> void:
+	_drag_active = false
+	_drag_slot = -1
 	for n in _card_nodes:
 		n.queue_free()
 	_card_nodes.clear()
@@ -1925,6 +2216,12 @@ func _create_tactile_card(slot: int) -> Control:
 	hit.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hit.disabled = disabled
 	hit.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	hit.button_down.connect(func():
+		if not disabled and not _modal_shade.visible and not _title_curtain.visible:
+			_drag_slot = slot
+			_drag_start_pos = get_viewport().get_mouse_position()
+			_drag_active = false
+	)
 	hit.pressed.connect(_use_card.bind(slot))
 	hit.mouse_entered.connect(func():
 		if not disabled and slot < _card_base_pos.size():
@@ -2118,14 +2415,20 @@ func _refresh_popover() -> void:
 				_pop_desc.text = "%s（再次点击据点也可直接出兵）" % r["reward"]
 
 
-func _spawn_float_text(stage_pos: Vector2, text: String, col: Color) -> void:
-	var lbl := _label(_stage, text, 22, col)
+func _spawn_float_text(stage_pos: Vector2, text: String, col: Color, big: bool = false) -> void:
+	var fsize := 28 if big else 22
+	var lbl := _label(_stage, text, fsize, col)
+	lbl.add_theme_constant_override("outline_size", 5)
+	lbl.add_theme_color_override("font_outline_color", Color(0.03, 0.03, 0.04, 0.96))
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	lbl.position = stage_pos + Vector2(-46.0, -30.0)
-	var tw := lbl.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tw.tween_property(lbl, "position:y", lbl.position.y - 42.0, 0.55)
-	tw.tween_interval(0.35)
-	tw.tween_property(lbl, "modulate:a", 0.0, 0.3)
+	lbl.position = stage_pos + Vector2(-48.0 + randf_range(-16.0, 16.0), -32.0)
+	lbl.scale = Vector2(0.42, 0.42)
+	var tw := lbl.create_tween()
+	tw.tween_property(lbl, "scale", Vector2(1.32, 1.32) if big else Vector2(1.18, 1.18), 0.11).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(lbl, "position:y", lbl.position.y - (56.0 if big else 44.0), 0.62).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(lbl, "scale", Vector2.ONE, 0.12)
+	tw.tween_interval(0.32)
+	tw.tween_property(lbl, "modulate:a", 0.0, 0.28)
 	tw.tween_callback(lbl.queue_free)
 
 
@@ -2139,17 +2442,19 @@ func _on_strike_performed(region_id: String, damage: int, source: String, conque
 	if is_nuke:
 		_used_nuke = true
 	_play_sfx("conquer" if conquered else "strike")
-	_shake_strength = 22.0 if is_nuke else (11.0 if conquered else 5.5)
+	_shake_strength = 24.0 if is_nuke else (13.0 if conquered else 6.5)
 	if is_nuke:
-		_screen_flash(GOLD, 0.58, 0.48)
+		_hitstop_timer = 0.075
+		_screen_flash(GOLD, 0.60, 0.48)
 	elif conquered:
-		_screen_flash(GOLD, 0.22, 0.28)
+		_hitstop_timer = 0.055
+		_screen_flash(GOLD, 0.26, 0.30)
 	if UV_REGIONS.has(region_id):
 		var target := _uv_to_stage(UV_REGIONS[region_id])
 		_projectiles.append({"start": _uv_to_stage(UV_XIANYANG), "end": target, "col": GOLD if (conquered or is_nuke) else CYAN, "t": 0.0, "big": conquered or is_nuke, "triple": is_nuke})
 		var region: Dictionary = _latest.regions.filter(func(r): return r.id == region_id)[0]
 		var loss := mini(damage, int(region.hp))
-		_spawn_float_text(target, "−%d%s" % [loss, " ★攻克" if conquered else ""], GOLD if conquered else CYAN)
+		_spawn_float_text(target, "−%d%s" % [loss, " ★攻克!" if conquered else ""], GOLD if (conquered or is_nuke) else CYAN, conquered or is_nuke or loss >= 45)
 		_lbl_ticker.text = "%s 命中【%s】−%d · %s" % [source, region.name, loss, "已染玄黑！" if conquered else "守军剩余 %d" % (int(region.hp) - loss)]
 	if conquered:
 		_popover.hide()
@@ -2305,7 +2610,10 @@ func _on_weakness_hit(region_id: String, bonus_text: String) -> void:
 func _on_boss_phase_triggered(region_id: String, title: String, desc: String) -> void:
 	_play_sfx("event")
 	_screen_flash(CRIMSON, 0.42, 0.45)
-	_shake_strength = maxf(_shake_strength, 14.0)
+	_hitstop_timer = 0.07
+	_shake_strength = maxf(_shake_strength, 16.0)
+	if UV_REGIONS.has(region_id):
+		_spawn_sparks(_uv_to_stage(UV_REGIONS[region_id]), CRIMSON, 32, 260.0)
 	if UV_REGIONS.has(region_id):
 		_spawn_float_text(_uv_to_stage(UV_REGIONS[region_id]) + Vector2(0, -48), "⚠ 锁血二阶段 · %s" % title, CRIMSON)
 	_act_banner_title.text = "⚠ 锁血二阶段 · %s" % title
@@ -2323,7 +2631,12 @@ func _on_boss_phase_triggered(region_id: String, title: String, desc: String) ->
 func _on_paradox_awakened(info: Dictionary) -> void:
 	_play_sfx("event")
 	_screen_flash(CRIMSON, 0.65, 0.65)
-	_shake_strength = maxf(_shake_strength, 22.0)
+	_hitstop_timer = 0.085
+	_emperor_glare_timer = 4.0
+	_crt_glitch_timer = 1.6
+	_shake_strength = maxf(_shake_strength, 24.0)
+	_spawn_sparks(_uv_to_stage(UV_REGIONS["paradox_core"]), CRIMSON, 42, 300.0, 80.0)
+	_spawn_sparks(_uv_to_stage(UV_CRT), CYAN, 28, 220.0, 60.0)
 	_act_banner_title.text = "⚠ 警告：历史修正率 100% — 启动【2076 焚书协议】"
 	_act_banner_sub.text = "未来终端接管咸阳沙盘！核心(260血·半血锁血)现身中央，每回合污染手牌并反噬民心，击毁核心方能真通关！"
 	_act_banner.visible = true
