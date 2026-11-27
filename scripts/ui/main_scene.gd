@@ -853,18 +853,9 @@ func _enter_game() -> void:
 
 
 func _show_title_curtain() -> void:
-	_ending_panel.hide()
-	_event_panel.hide()
-	_replace_panel.hide()
-	_rules_panel.hide()
-	_log_panel.hide()
-	_codex_panel.hide()
-	_hidden_panel.hide()
-	_debate_panel.hide()
-	_pact_panel.hide()
-	_sync_modal_shade()
 	_title_curtain.modulate.a = 0.0
 	_title_curtain.visible = true
+	_restart(false)
 	create_tween().tween_property(_title_curtain, "modulate:a", 1.0, 0.35)
 
 
@@ -2047,6 +2038,7 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 	var is_sage := (code == "win_sage")
 	_play_sfx("victory" if is_sage else "defeat")
 	_screen_flash(GOLD if is_sage else CRIMSON, 0.42, 0.5)
+	_selected = ""
 	_popover.hide()
 	if code == "win_sage":
 		_ending_cg.texture = _tex_end_win
