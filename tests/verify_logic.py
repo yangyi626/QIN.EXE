@@ -299,7 +299,32 @@ def main():
             assert core.hidden_vis(hid) == vis, f"{tc['id']} hidden {hid} mismatch"
         passed += 1
 
-    print(f"ALL CHECKS PASSED: {passed}/49 test cases, total_hp={total_hp}, all lines <= 25 chars.")
+    # 4. Extended v3.5 checks: 18 advisors (9M + 9F), portraits on disk, 4 dialogue buckets, 14 synergies, Boss Phase-2 & Paradox Core
+    female_ids = ["baqing", "fuhao", "huangdaopo", "mulan", "wuzetian", "liqingzhao", "caiwenji", "fanlihua", "banzhao"]
+    adv_map = {a["id"]: a for a in DATA["advisors"]}
+    for fid in female_ids:
+        assert fid in adv_map, f"Missing female advisor in game_data.json: {fid}"
+        assert fid in LINES["advisors"], f"Missing female advisor in lines.json: {fid}"
+        for bkt in ("summon", "normal", "low_morale", "hidden_hint"):
+            assert LINES["advisors"][fid].get(bkt), f"Missing line bucket {fid}.{bkt}"
+    for aid, adv in adv_map.items():
+        rel_p = adv["portrait"].replace("res://", "")
+        assert os.path.exists(os.path.join(ROOT, rel_p)), f"Missing portrait asset: {rel_p}"
+
+    core_src = open(os.path.join(ROOT, "scripts", "core", "game_core.gd"), encoding="utf-8").read()
+    for syn_id in [
+        "wolong_jianxiong", "bianfa_shuangbi", "silu_shuili", "bingxian_guanjun", "wanjia_denghuo",
+        "silu_danshang", "wushuang_zhanshen", "yishi_shouwang", "juedai_shuangjiao",
+        "qiankun_xinzheng", "jinxiu_wenmai", "hujia_guihan", "jinguo_bingxian", "qianqiu_lantai",
+    ]:
+        assert f'"{syn_id}"' in core_src, f"Missing synergy in game_core.gd: {syn_id}"
+    for hook in [
+        "signal boss_phase_triggered", "signal paradox_awakened",
+        "boss_lock_hp", "paradox_core", "_trigger_boss_phase2", "_awaken_paradox_boss",
+    ]:
+        assert hook in core_src, f"Missing boss/paradox hook in game_core.gd: {hook}"
+
+    print(f"ALL CHECKS PASSED: {passed}/49 core cases + 18-advisor/14-synergy/boss-paradox checks, total_hp={total_hp}, all lines <= 25 chars.")
 
 
 if __name__ == "__main__":

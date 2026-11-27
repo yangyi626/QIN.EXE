@@ -153,6 +153,16 @@ var _hidden_box: HBoxContainer
 var _act_banner: PanelContainer
 var _act_banner_title: Label
 var _act_banner_sub: Label
+var _guide_bar: PanelContainer
+var _guide_lbl: Label
+var _banner_tween: Tween
+var _cutin_tween: Tween
+var _cutin_bar: PanelContainer
+var _cutin_pic_l: TextureRect
+var _cutin_pic_r: TextureRect
+var _cutin_title: Label
+var _cutin_sub: Label
+var _meta_save: Dictionary = {"summoned": [], "endings": [], "wins": 0, "runs": 0, "best_grade": "", "tutorial_done": false}
 var _title_curtain: Control
 var _rules_panel: PanelContainer
 var _log_panel: PanelContainer
@@ -239,6 +249,7 @@ func _ready() -> void:
 	core.boss_phase_triggered.connect(_on_boss_phase_triggered)
 	core.paradox_awakened.connect(_on_paradox_awakened)
 
+	_load_meta_save()
 	get_viewport().size_changed.connect(_layout_dynamic_elements)
 	_restart(false)
 
@@ -643,6 +654,25 @@ func _build_stage_and_ui() -> void:
 	_act_banner_sub = _label(abv, "", 12, CYAN)
 	_act_banner_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
+	# 11b. 首回合 3 步轻引导浮条（不遮挡操作，完成或点击跳过后自动隐藏）
+	_guide_bar = PanelContainer.new()
+	_guide_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+	_guide_bar.offset_left = -280; _guide_bar.offset_top = 144; _guide_bar.offset_right = 280; _guide_bar.offset_bottom = 182
+	_guide_bar.add_theme_stylebox_override("panel", _flat_style(Color(0.05, 0.08, 0.10, 0.92), GOLD, 10, 6))
+	_guide_bar.visible = false
+	add_child(_guide_bar)
+	var gh := HBoxContainer.new()
+	gh.add_theme_constant_override("separation", 10)
+	_guide_bar.add_child(gh)
+	_guide_lbl = _label(gh, "", 13, GOLD)
+	_guide_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var gskip := _button(gh, "跳过", func():
+		_guide_bar.visible = false
+		_meta_save["tutorial_done"] = true
+		_save_meta_save()
+	, MUTED)
+	gskip.custom_minimum_size = Vector2(48, 24)
+
 	# 12. 统一青铜雕花模态弹窗（事件 / 含CG终局档案 / 名臣替换 / 推演简则 / 战局实录）
 	# Hand cards use local z_index for their fan and hover. Keep all dialogs above that canvas.
 	_modal_layer.layer = 1
@@ -652,6 +682,44 @@ func _build_stage_and_ui() -> void:
 	_modal_shade.color = Color(0.01, 0.015, 0.022, 0.78)
 	_modal_shade.hide()
 	_modal_layer.add_child(_modal_shade)
+
+	# 11c. 羁绊 / 秘技双名臣立绘切入横幅（Cut-in，不拦截鼠标）
+	_cutin_bar = PanelContainer.new()
+	_cutin_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_cutin_bar.offset_left = -360; _cutin_bar.offset_top = -76; _cutin_bar.offset_right = 360; _cutin_bar.offset_bottom = 76
+	_cutin_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cutin_bar.add_theme_stylebox_override("panel", _flat_style(Color(0.03, 0.04, 0.06, 0.94), GOLD, 12, 10))
+	_cutin_bar.visible = false
+	_modal_layer.add_child(_cutin_bar)
+	var cih := HBoxContainer.new()
+	cih.alignment = BoxContainer.ALIGNMENT_CENTER
+	cih.add_theme_constant_override("separation", 18)
+	cih.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cutin_bar.add_child(cih)
+	_cutin_pic_l = TextureRect.new()
+	_cutin_pic_l.custom_minimum_size = Vector2(108, 108)
+	_cutin_pic_l.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_cutin_pic_l.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_cutin_pic_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cih.add_child(_cutin_pic_l)
+	var civ := VBoxContainer.new()
+	civ.alignment = BoxContainer.ALIGNMENT_CENTER
+	civ.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	civ.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cih.add_child(civ)
+	_cutin_title = _label(civ, "", 24, GOLD)
+	_cutin_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_cutin_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cutin_sub = _label(civ, "", 13, Color("#e8f6f8"))
+	_cutin_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_cutin_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_cutin_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cutin_pic_r = TextureRect.new()
+	_cutin_pic_r.custom_minimum_size = Vector2(108, 108)
+	_cutin_pic_r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_cutin_pic_r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_cutin_pic_r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cih.add_child(_cutin_pic_r)
 
 	_event_panel = _make_modal(Vector2(650, 520))
 	var ev_box := VBoxContainer.new()
@@ -880,6 +948,7 @@ func _enter_game() -> void:
 	tw.tween_callback(func():
 		_title_curtain.visible = false
 		_title_curtain.modulate.a = 1.0
+		_update_first_turn_guide(_latest)
 		_show_act_banner(1)
 		_animate_hand_deal()
 	)
@@ -941,10 +1010,11 @@ func _populate_codex() -> void:
 					if arr is Array and not arr.is_empty():
 						quote = "「%s」" % str(arr[0])
 						break
+			var collected: bool = adv["id"] in _meta_save.get("summoned", [])
 			_codex_grid.add_child(_make_codex_card(
-				adv["name"], "-%d" % int(adv["cost"]), "常驻",
-				adv["skill"], quote, "- 玄黑名臣 -", "NO.%02d" % idx,
-				GOLD, Color("#3a2c16"), adv.get("portrait", "")
+				adv["name"], "-%d" % int(adv["cost"]), "★已收录" if collected else "常驻",
+				adv["skill"], quote, "- ★ 已收录 -" if collected else "- 玄黑名臣 -", "NO.%02d" % idx,
+				GOLD if collected else CYAN, Color("#4a3614") if collected else Color("#24201a"), adv.get("portrait", "")
 			))
 			idx += 1
 	elif _codex_mode == "landmarks":
@@ -1114,14 +1184,31 @@ func _make_codex_card(title: String, badge_txt: String, keyword: String, desc: S
 	return card
 
 
+func _start_banner_animation() -> Tween:
+	if _banner_tween:
+		_banner_tween.kill()
+	_act_banner.add_theme_stylebox_override("panel", _flat_style(Color(0.03, 0.04, 0.055, 0.9), GOLD, 10, 6))
+	_act_banner_title.modulate = GOLD
+	_banner_tween = _act_banner.create_tween()
+	return _banner_tween
+
+
+func _clear_presentations() -> void:
+	if _banner_tween:
+		_banner_tween.kill()
+	if _cutin_tween:
+		_cutin_tween.kill()
+	_act_banner.hide()
+	_cutin_bar.hide()
+
 func _show_act_banner(act_num: int) -> void:
 	if not ACT_TITLES.has(act_num):
 		return
+	var tw := _start_banner_animation()
 	_act_banner_title.text = ACT_TITLES[act_num][0]
 	_act_banner_sub.text = ACT_TITLES[act_num][1]
 	_act_banner.visible = true
 	_act_banner.modulate.a = 0.0
-	var tw := create_tween()
 	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.35)
 	tw.tween_interval(1.7)
 	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.45)
@@ -1828,6 +1915,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _restart(show_banner: bool = true) -> void:
+	_clear_presentations()
 	_pending_cheat_slot = -1
 	_pending_replace_card_slot = -1
 	_selected = ""
@@ -1914,7 +2002,7 @@ func _on_state_changed(snap: Dictionary) -> void:
 		if dp > 0:
 			_pulses.append({"pos": _uv_to_stage(UV_XIANYANG), "col": CYAN, "t": 0.0, "max_r": 64.0})
 			_spawn_float_text(_uv_to_stage(UV_XIANYANG) + Vector2(0, -28), "+%d 耐心" % dp, GOLD)
-		if old_act > 0 and _prev_act > old_act and not _title_curtain.visible:
+		if old_act > 0 and _prev_act > old_act and not snap.paradox_phase and not _title_curtain.visible:
 			_play_sfx("chime")
 			_show_act_banner(_prev_act)
 
@@ -1946,6 +2034,7 @@ func _on_state_changed(snap: Dictionary) -> void:
 		if want_bgm != null and _bgm_player.stream != want_bgm:
 			_bgm_player.stream = want_bgm
 			_bgm_player.play()
+		_bgm_player.pitch_scale = 1.14 if bool(snap.get("paradox_phase", false)) else 1.0
 	if _uprising_player != null and _uprising_player.stream != null:
 		if low and not _audio_muted:
 			var intensity := clampf(float(40 - _prev_morale) / 40.0, 0.0, 1.0)
@@ -1968,6 +2057,18 @@ func _on_state_changed(snap: Dictionary) -> void:
 
 	# 更新两位全息名臣立绘及悬停技能提示
 	var advs: Array = snap["advisors"]
+	var meta_dirty := false
+	var sum_list: Array = _meta_save.get("summoned", [])
+	for a_rec in advs:
+		if not (a_rec["id"] in sum_list):
+			sum_list.append(a_rec["id"])
+			meta_dirty = true
+	if int(snap.get("turn", 1)) >= 2 and not bool(_meta_save.get("tutorial_done", false)):
+		_meta_save["tutorial_done"] = true
+		meta_dirty = true
+	if meta_dirty:
+		_meta_save["summoned"] = sum_list
+		_save_meta_save()
 	for i in range(2):
 		if i < advs.size():
 			var p_path: String = advs[i].get("portrait", "")
@@ -1991,6 +2092,7 @@ func _on_state_changed(snap: Dictionary) -> void:
 			var hb := _button(_hidden_box, "✦ " + hname, func(): _play_sfx("click"); _cancel_aim(); _result(core.trigger_hidden(hid)), GOLD)
 			hb.add_theme_color_override("font_color", GOLD)
 
+	_update_first_turn_guide(snap)
 	if bool(snap.get("free_hook_available", false)):
 		_lbl_ticker.text = "★ 首回合高光：下方首次召唤【名臣】或拍出【无人机蜂群】免民心；点击沙盘发光点可直接出兵。"
 	elif _lbl_ticker.text == "":
@@ -2001,6 +2103,23 @@ func _on_state_changed(snap: Dictionary) -> void:
 	_last_cards_sig = new_sig
 	_rebuild_hand_cards(should_deal)
 	_refresh_popover()
+
+
+func _update_first_turn_guide(snap: Dictionary) -> void:
+	if _guide_bar == null:
+		return
+	if bool(_meta_save.get("tutorial_done", false)) or _title_curtain.visible or int(snap.get("turn", 1)) > 1:
+		_guide_bar.visible = false
+		return
+	if bool(snap.get("free_hook_available", false)):
+		_guide_lbl.text = "💡 新手引导 1/3：召唤一位免费名臣，或把无人机拖到敌方战区。"
+		_guide_bar.visible = true
+	elif int(snap.get("attack_left", 0)) > 0:
+		_guide_lbl.text = "💡 新手引导 2/3：点击地图上的敌方战区，再点「常规进攻」。"
+		_guide_bar.visible = true
+	else:
+		_guide_lbl.text = "💡 新手引导 3/3：点击右下角【结束本回合】，进入下一回合。"
+		_guide_bar.visible = true
 
 
 func _refresh_buff_pills(snap: Dictionary) -> void:
@@ -2065,7 +2184,16 @@ func _rebuild_hand_cards(animate_deal: bool = false) -> void:
 	var scards: Array = _latest.get("secret_cards", [])
 	for si in range(scards.size()):
 		var sc: Dictionary = scards[si]
-		var sb := _button(_secret_box, "★ 0费秘技 · %s" % sc["name"], func(): _play_sfx("chime"); _cancel_aim(); _result(core.cast_secret_card(si)), GOLD)
+		var sc_name: String = sc["name"]
+		var sc_desc: String = sc["desc"]
+		var sb := _button(_secret_box, "★ 0费秘技 · %s" % sc_name, func():
+			_play_sfx("chime")
+			_cancel_aim()
+			var res := core.cast_secret_card(si)
+			if res.get("ok", false):
+				_show_cutin("★ 国师秘技 · %s" % sc_name, sc_desc, GOLD)
+			_result(res)
+		, GOLD)
 		sb.add_theme_stylebox_override("normal", _flat_style(Color(0.16, 0.11, 0.04, 0.94), GOLD, 8, 6))
 		sb.add_theme_color_override("font_color", GOLD)
 		sb.tooltip_text = sc["desc"]
@@ -2511,6 +2639,7 @@ func _on_event_triggered(ev: Dictionary) -> void:
 
 
 func _on_game_ended(code: String, data: Dictionary) -> void:
+	_clear_presentations()
 	# GameCore emits game_ended before the last state_changed notification.
 	var final_state := core.get_snapshot()
 	var final_morale := int(final_state.morale)
@@ -2570,6 +2699,19 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 	if won and adv_names.size() >= 2:
 		achs.append("👑 不朽双壁")
 	_ending_ach.text = "本局解锁勋章：" + ("  ".join(achs) if not achs.is_empty() else "尚无勋章（下次试试触发隐藏关或带名臣通关！）")
+	_meta_save["runs"] = int(_meta_save.get("runs", 0)) + 1
+	if won:
+		_meta_save["wins"] = int(_meta_save.get("wins", 0)) + 1
+	var end_list: Array = _meta_save.get("endings", [])
+	if not (code in end_list):
+		end_list.append(code)
+	if won and broke_paradox and not ("paradox_cleared" in end_list):
+		end_list.append("paradox_cleared")
+	_meta_save["endings"] = end_list
+	var rank_order := {"": 0, "C · 历史回响": 1, "B · 赛博霸业": 2, "A · 守望大同": 3, "S · 盛世千古": 4, "S+ · 破壁万世": 5}
+	if int(rank_order.get(grade, 0)) > int(rank_order.get(str(_meta_save.get("best_grade", "")), 0)):
+		_meta_save["best_grade"] = grade
+	_save_meta_save()
 	_ending_panel.show()
 	_sync_modal_shade()
 
@@ -2584,16 +2726,56 @@ func _on_threat_interrupted(region_id: String, reward_text: String) -> void:
 
 func _on_synergy_activated(synergy_name: String, desc: String) -> void:
 	_play_sfx("chime")
-	_screen_flash(GOLD, 0.28, 0.35)
-	_act_banner_title.text = "✦ 激活名臣羁绊 · %s" % synergy_name
-	_act_banner_sub.text = desc
-	_act_banner.visible = true
-	_act_banner.modulate.a = 0.0
-	var tw := create_tween()
-	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.3)
-	tw.tween_interval(2.0)
-	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.4)
-	tw.tween_callback(_act_banner.hide)
+	_screen_flash(GOLD, 0.32, 0.38)
+	_show_cutin("✦ 名臣羁绊共鸣 · %s" % synergy_name, desc, GOLD)
+
+
+func _show_cutin(title: String, sub: String, accent: Color) -> void:
+	if _cutin_bar == null:
+		return
+	var advs: Array = core.advisors
+	_cutin_pic_l.visible = advs.size() >= 1
+	_cutin_pic_r.visible = advs.size() >= 2
+	if advs.size() >= 1 and ResourceLoader.exists(advs[0].get("portrait", "")):
+		_cutin_pic_l.texture = load(advs[0]["portrait"])
+	if advs.size() >= 2 and ResourceLoader.exists(advs[1].get("portrait", "")):
+		_cutin_pic_r.texture = load(advs[1]["portrait"])
+	_cutin_title.text = title
+	_cutin_title.modulate = accent
+	_cutin_sub.text = sub
+	_cutin_bar.add_theme_stylebox_override("panel", _flat_style(Color(0.03, 0.04, 0.06, 0.95), accent, 12, 10))
+	_cutin_bar.visible = true
+	_cutin_bar.modulate.a = 0.0
+	_cutin_bar.scale = Vector2(1.18, 0.82)
+	_cutin_bar.pivot_offset = _cutin_bar.size * 0.5
+	if _cutin_tween:
+		_cutin_tween.kill()
+	_cutin_tween = _cutin_bar.create_tween()
+	var tw := _cutin_tween
+	tw.tween_property(_cutin_bar, "modulate:a", 1.0, 0.14)
+	tw.parallel().tween_property(_cutin_bar, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(1.65)
+	tw.tween_property(_cutin_bar, "modulate:a", 0.0, 0.28)
+	tw.parallel().tween_property(_cutin_bar, "scale", Vector2(0.92, 0.92), 0.28)
+	tw.tween_callback(_cutin_bar.hide)
+
+
+func _load_meta_save() -> void:
+	var path := "user://save.json"
+	if not FileAccess.file_exists(path):
+		return
+	var raw := FileAccess.get_file_as_string(path)
+	var parsed: Variant = JSON.parse_string(raw)
+	if parsed is Dictionary:
+		for k in parsed.keys():
+			_meta_save[k] = parsed[k]
+
+
+func _save_meta_save() -> void:
+	var f := FileAccess.open("user://save.json", FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(_meta_save, "	"))
+		f.close()
 
 
 func _on_decree_completed(title: String, reward_text: String) -> void:
@@ -2616,11 +2798,11 @@ func _on_boss_phase_triggered(region_id: String, title: String, desc: String) ->
 		_spawn_sparks(_uv_to_stage(UV_REGIONS[region_id]), CRIMSON, 32, 260.0)
 	if UV_REGIONS.has(region_id):
 		_spawn_float_text(_uv_to_stage(UV_REGIONS[region_id]) + Vector2(0, -48), "⚠ 锁血二阶段 · %s" % title, CRIMSON)
+	var tw := _start_banner_animation()
 	_act_banner_title.text = "⚠ 锁血二阶段 · %s" % title
 	_act_banner_sub.text = desc
 	_act_banner.visible = true
 	_act_banner.modulate.a = 0.0
-	var tw := create_tween()
 	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.22)
 	tw.tween_interval(2.6)
 	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.4)
@@ -2629,23 +2811,46 @@ func _on_boss_phase_triggered(region_id: String, title: String, desc: String) ->
 
 
 func _on_paradox_awakened(info: Dictionary) -> void:
-	_play_sfx("event")
-	_screen_flash(CRIMSON, 0.65, 0.65)
-	_hitstop_timer = 0.085
-	_emperor_glare_timer = 4.0
-	_crt_glitch_timer = 1.6
-	_shake_strength = maxf(_shake_strength, 24.0)
-	_spawn_sparks(_uv_to_stage(UV_REGIONS["paradox_core"]), CRIMSON, 42, 300.0, 80.0)
-	_spawn_sparks(_uv_to_stage(UV_CRT), CYAN, 28, 220.0, 60.0)
-	_act_banner_title.text = "⚠ 警告：历史修正率 100% — 启动【2076 焚书协议】"
-	_act_banner_sub.text = "未来终端接管咸阳沙盘！核心(260血·半血锁血)现身中央，每回合污染手牌并反噬民心，击毁核心方能真通关！"
+	# 第一拍：伪造金色「六洲已定 · 万世太平」胜利横幅（1.35秒）
+	_play_sfx("victory")
+	_screen_flash(GOLD, 0.45, 0.45)
+	var tw := _start_banner_animation()
+	_act_banner.add_theme_stylebox_override("panel", _flat_style(Color(0.08, 0.06, 0.02, 0.95), GOLD, 10, 6))
+	_act_banner_title.modulate = GOLD
+	_act_banner_title.text = "👑 六洲已定 · 大秦万世太平"
+	_act_banner_sub.text = "恭喜国师！六大洲尽归玄黑，史官正在篆刻终局盛世档案……"
 	_act_banner.visible = true
 	_act_banner.modulate.a = 0.0
-	var tw := create_tween()
-	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.25)
-	tw.tween_interval(4.2)
-	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.5)
-	tw.tween_callback(_act_banner.hide)
+	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.22)
+	tw.tween_interval(1.15)
+	# 第二拍：画面乱码撕裂、红闪剧震、始皇猩红双瞳苏醒！
+	tw.tween_callback(func():
+		_play_sfx("event")
+		_hitstop_timer = 0.09
+		_emperor_glare_timer = 5.0
+		_crt_glitch_timer = 2.4
+		_shake_strength = 28.0
+		_screen_flash(CRIMSON, 0.72, 0.65)
+		_spawn_sparks(_uv_to_stage(UV_REGIONS["paradox_core"]), CRIMSON, 48, 320.0, 80.0)
+		_spawn_sparks(_uv_to_stage(UV_CRT), CYAN, 30, 240.0, 60.0)
+		_act_banner.add_theme_stylebox_override("panel", _flat_style(Color(0.14, 0.02, 0.03, 0.96), CRIMSON, 10, 6))
+		_act_banner_title.modulate = CRIMSON
+		_act_banner_title.text = "█▓▒░ ERR_2076 :: 历史修正率 100% ░▒▓█"
+		_act_banner_sub.text = "检测到非法时空干涉——伪装终局已终止，强制启动【2076 焚书协议】！"
+	)
+	tw.tween_interval(1.15)
+	# 第三拍：锁定清晰战术简报，正式进入终幕 Boss 决战
+	tw.tween_callback(func():
+		_act_banner_title.text = "⚠ 终幕 · 2076 焚书协议"
+		_act_banner_sub.text = "未来终端核心(260血·130锁血)现身沙盘中央！刷新可净化红色污染牌，击毁核心方能真通关！"
+	)
+	tw.tween_interval(3.4)
+	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.45)
+	tw.tween_callback(func():
+		_act_banner.hide()
+		_act_banner.add_theme_stylebox_override("panel", _flat_style(Color(0.03, 0.04, 0.055, 0.9), GOLD, 10, 6))
+		_act_banner_title.modulate = GOLD
+	)
 	_lbl_ticker.text = "⚠ 【终幕·2076焚书协议】击毁中央终端核心(260血)！刷新终端可净化红色污染手牌，本回合攻击核心可使反噬减半！"
 
 
@@ -2685,11 +2890,11 @@ func _open_pact_modal() -> void:
 func _on_secret_card_gained(card: Dictionary) -> void:
 	_play_sfx("victory")
 	_screen_flash(GOLD, 0.34, 0.4)
+	var tw := _start_banner_animation()
 	_act_banner_title.text = "★ 天降 0 费国师秘技 · %s" % card["name"]
 	_act_banner_sub.text = card["desc"]
 	_act_banner.visible = true
 	_act_banner.modulate.a = 0.0
-	var tw := create_tween()
 	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.28)
 	tw.tween_interval(2.2)
 	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.4)
