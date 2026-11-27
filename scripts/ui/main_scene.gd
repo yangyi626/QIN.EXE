@@ -138,11 +138,13 @@ var _log_panel: PanelContainer
 var _log_text: Label
 var _codex_panel: PanelContainer
 var _codex_grid: GridContainer
+var _codex_scroll: ScrollContainer
 var _codex_tab_adv: Button
 var _codex_tab_cheat: Button
 var _codex_tab_lands: Button
 var _codex_mode: String = "advisors"
 var _modal_shade: ColorRect
+var _modal_layer := CanvasLayer.new()
 var _event_panel: PanelContainer
 var _event_img: TextureRect
 var _event_title: Label
@@ -582,11 +584,14 @@ func _build_stage_and_ui() -> void:
 	_act_banner_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
 	# 12. 统一青铜雕花模态弹窗（事件 / 含CG终局档案 / 名臣替换 / 推演简则 / 战局实录）
+	# Hand cards use local z_index for their fan and hover. Keep all dialogs above that canvas.
+	_modal_layer.layer = 1
+	add_child(_modal_layer)
 	_modal_shade = ColorRect.new()
 	_modal_shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_modal_shade.color = Color(0.01, 0.015, 0.022, 0.78)
 	_modal_shade.hide()
-	add_child(_modal_shade)
+	_modal_layer.add_child(_modal_shade)
 
 	_event_panel = _make_modal(Vector2(590, 480))
 	var ev_box := VBoxContainer.new()
@@ -688,33 +693,34 @@ func _build_stage_and_ui() -> void:
 	_log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_button(l_box, "关闭战录 (L)", _toggle_logs, GOLD)
 
-	_codex_panel = _make_modal(Vector2(840, 540))
+	_codex_panel = _make_modal(Vector2(960, 588))
+	_codex_panel.add_theme_stylebox_override("panel", _plaque_style(48, 36))
 	var c_box := VBoxContainer.new()
 	c_box.add_theme_constant_override("separation", 10)
 	_codex_panel.add_child(c_box)
 	var c_hdr := HBoxContainer.new()
 	c_hdr.add_theme_constant_override("separation", 10)
 	c_box.add_child(c_hdr)
-	_label(c_hdr, "咸阳藏经阁  /  全 21 张卡牌图鉴", 16, GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_label(c_hdr, "咸阳藏经阁", 22, GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_codex_tab_adv = _button(c_hdr, "👑 历史名臣 (9)", func(): _play_sfx("click"); _codex_mode = "advisors"; _populate_codex(), GOLD)
 	_codex_tab_cheat = _button(c_hdr, "⚡ 外挂 (12)", func(): _play_sfx("click"); _codex_mode = "cheats"; _populate_codex(), CYAN)
 	_codex_tab_lands = _button(c_hdr, "🏛 九州舆图 (7)", func(): _play_sfx("click"); _codex_mode = "landmarks"; _populate_codex(), GOLD)
 	_button(c_hdr, "关闭 (C)", _toggle_codex, MUTED)
-	var c_scroll := ScrollContainer.new()
-	c_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	c_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	c_box.add_child(c_scroll)
+	_codex_scroll = ScrollContainer.new()
+	_codex_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_codex_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	c_box.add_child(_codex_scroll)
 	_codex_grid = GridContainer.new()
 	_codex_grid.columns = 3
 	_codex_grid.add_theme_constant_override("h_separation", 12)
 	_codex_grid.add_theme_constant_override("v_separation", 12)
 	_codex_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	c_scroll.add_child(_codex_grid)
+	_codex_scroll.add_child(_codex_grid)
 
 	# 13. 电影感开场主屏幕布
 	_title_curtain = Control.new()
 	_title_curtain.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(_title_curtain)
+	_modal_layer.add_child(_title_curtain)
 	var shade := ColorRect.new()
 	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	shade.color = Color(0.015, 0.018, 0.025, 0.72)
@@ -810,7 +816,9 @@ func _toggle_codex() -> void:
 
 
 func _populate_codex() -> void:
+	_codex_scroll.scroll_vertical = 0
 	for ch in _codex_grid.get_children():
+		_codex_grid.remove_child(ch)
 		ch.queue_free()
 	_codex_tab_adv.modulate = GOLD if _codex_mode == "advisors" else MUTED
 	_codex_tab_cheat.modulate = CYAN if _codex_mode == "cheats" else MUTED
@@ -827,7 +835,7 @@ func _populate_codex() -> void:
 						break
 			_codex_grid.add_child(_make_codex_card(
 				adv["name"], "名臣 · 耗%d民心" % int(adv["cost"]), GOLD,
-				adv.get("portrait", ""), adv["skill"] + ("\n" + quote if quote != "" else "")
+				adv.get("portrait", ""), adv["skill"], quote
 			))
 	elif _codex_mode == "landmarks":
 		_codex_grid.add_child(_make_codex_card("大秦 · 咸阳宫", "龙兴本营 · 常规战力 %d" % int(_latest.get("conventional_power", 20)), GOLD, "res://assets/landmarks/xianyang.jpg", "咸阳宫与万里长城：玄黑帝国核心，点击沙盘本营可随时巡视国力。"))
@@ -846,24 +854,12 @@ func _populate_codex() -> void:
 			))
 
 
-func _make_codex_card(title: String, meta: String, tint: Color, art_path: String, desc: String) -> Control:
-	var card := Control.new()
-	card.custom_minimum_size = Vector2(240, 212)
-	var bg := TextureRect.new()
-	bg.texture = _tex_card
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_SCALE
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	card.add_child(bg)
-	var rim := ColorRect.new()
-	rim.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	rim.offset_left = 14; rim.offset_top = 10; rim.offset_right = -14; rim.offset_bottom = 13
-	rim.color = tint
-	card.add_child(rim)
+func _make_codex_card(title: String, meta: String, tint: Color, art_path: String, desc: String, quote: String = "") -> Control:
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.add_theme_stylebox_override("panel", _flat_style(Color("#171c20"), Color("#514837"), 14, 4))
 	var vb := VBoxContainer.new()
-	vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	vb.offset_left = 16; vb.offset_top = 18; vb.offset_right = -16; vb.offset_bottom = -14
-	vb.add_theme_constant_override("separation", 5)
+	vb.add_theme_constant_override("separation", 8)
 	card.add_child(vb)
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 8)
@@ -879,11 +875,14 @@ func _make_codex_card(title: String, meta: String, tint: Color, art_path: String
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tv.alignment = BoxContainer.ALIGNMENT_CENTER
 	top.add_child(tv)
-	_label(tv, title, 16, Color.WHITE)
-	_label(tv, meta, 11, tint)
-	var dl := _label(vb, desc, 11, Color("#d4e1e2"))
+	var name_label := _label(tv, title, 18, Color.WHITE, false)
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_label(tv, meta, 12, tint, false)
+	var dl := _label(vb, desc, 14, Color("#e1e6e4"), false)
 	dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	dl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	if not quote.is_empty():
+		var excerpt := _label(vb, quote, 12, MUTED, false)
+		excerpt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return card
 
 
@@ -908,7 +907,7 @@ func _make_modal(sz: Vector2) -> PanelContainer:
 	p.offset_right = sz.x * 0.5; p.offset_bottom = sz.y * 0.5
 	p.add_theme_stylebox_override("panel", _plaque_style(34, 28))
 	p.visible = false
-	add_child(p)
+	_modal_layer.add_child(p)
 	return p
 
 
