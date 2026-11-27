@@ -1,6 +1,6 @@
 class_name GameCore
 extends RefCounted
-## 《大秦：2076》纯逻辑核心层（v3.1 · 兼容v2.1测试 + 深度博弈与NPC朝堂介入）
+## 《大秦：2076》纯逻辑核心层（v3.2 · 国师秘技炸场 + 始皇密匣暗黑献祭）
 ## 严禁引用任何 Node、场景树或 UI 节点；UI 仅订阅下方信号并调用公开命令方法。
 
 signal state_changed(snapshot: Dictionary)
@@ -14,6 +14,8 @@ signal synergy_activated(synergy_name: String, desc: String)
 signal decree_completed(title: String, reward_text: String)
 signal debate_triggered(debate_data: Dictionary)
 signal weakness_hit(region_id: String, bonus_text: String)
+signal secret_card_gained(card: Dictionary)
+signal pact_made(title: String, desc: String)
 
 var _data: Dictionary = {}
 var _lines: Dictionary = {}
@@ -31,6 +33,13 @@ var temp_power_bonus: int = 0
 var perm_decree_power_bonus: int = 0
 var debate_next_mil_bonus: int = 0
 var _announced_synergies: Dictionary = {}
+var secret_cards: Array[Dictionary] = []
+var interrupt_count: int = 0
+var _interrupt_milestone_given: bool = false
+var secret_overclock_active: bool = false
+var pact_used: bool = false
+var pact_morale_cap_penalty: int = 0
+var pact_free_hand_turn: bool = false
 var turn: int = 1
 var patience: int = 12
 var morale: int = 60
@@ -80,9 +89,18 @@ func init_game(game_data: Dictionary, lines_data: Dictionary = {}, p_mvp_only: b
 	triggered_debates.clear()
 	first_mil_used_turn = false
 	temp_power_bonus = 0
+	pact_free_hand_turn = false
+	secret_overclock_active = false
 	perm_decree_power_bonus = 0
 	debate_next_mil_bonus = 0
 	_announced_synergies.clear()
+	secret_cards.clear()
+	interrupt_count = 0
+	_interrupt_milestone_given = false
+	secret_overclock_active = false
+	pact_used = false
+	pact_morale_cap_penalty = 0
+	pact_free_hand_turn = false
 	if rng_seed >= 0:
 		_rng.seed = rng_seed
 	else:
@@ -187,9 +205,8 @@ func get_region_weakness_info(region_id: String) -> Dictionary:
 
 
 func get_morale_cap() -> int:
-	if has_advisor("shangyang") and not has_synergy("bianfa_shuangbi"):
-		return 80
-	return 100
+	var base_cap := 80 if (has_advisor("shangyang") and not has_synergy("bianfa_shuangbi")) else 100
+	return maxi(30, base_cap - pact_morale_cap_penalty)
 
 
 func get_conquered_count() -> int:
@@ -222,6 +239,8 @@ func get_effective_cheat_delta(cheat: Dictionary) -> int:
 		if cheat["category"] == "livelihood" and has_advisor("libing"):
 			return delta * 2
 		return delta
+	if pact_free_hand_turn:
+		return 0
 	if turn == 1 and free_hook_available and cheat["id"] == "drone":
 		return 0
 	var cost := float(absi(delta))
@@ -239,7 +258,7 @@ func get_effective_cheat_delta(cheat: Dictionary) -> int:
 
 
 func get_effective_advisor_cost(adv: Dictionary) -> int:
-	if turn == 1 and free_hook_available:
+	if pact_free_hand_turn or (turn == 1 and free_hook_available):
 		return 0
 	return int(adv["cost"])
 
@@ -311,6 +330,10 @@ func get_snapshot() -> Dictionary:
 		"active_synergies": get_active_synergies(),
 		"active_decree": active_decree.duplicate(true),
 		"debate_next_mil_bonus": debate_next_mil_bonus,
+		"secret_cards": secret_cards.duplicate(true),
+		"secret_overclock_active": secret_overclock_active,
+		"pact_used": pact_used,
+		"pact_free_hand_turn": pact_free_hand_turn,
 		"game_over_code": game_over_code,
 		"logs": logs.duplicate(),
 	}
@@ -337,6 +360,10 @@ func conventional_attack(region_id: String) -> Dictionary:
 			dmg += 12
 			weakness_hit.emit(region_id, "瘟疫退散 +12")
 	attack_left -= 1
+	if tactical_mode and secret_overclock_active:
+		dmg *= 2
+		secret_overclock_active = false
+		weakness_hit.emit(region_id, "乾坤借势 ×2")
 	var res := _apply_damage(region_id, dmg, false, "常规秦军")
 	_emit_state()
 	return res
@@ -421,6 +448,7 @@ func summon_advisor(slot_index: int, replace_index: int = -1) -> Dictionary:
 				_announced_synergies[syn["id"]] = true
 				_log("✦ 激活名臣羁绊【%s】：%s" % [syn["name"], syn["desc"]])
 				synergy_activated.emit(syn["name"], syn["desc"])
+				_grant_secret_card("激活羁绊·" + syn["name"])
 		_check_decree_progress()
 	_emit_state()
 	return {"ok": true, "advisor_id": adv["id"], "cost": cost}
@@ -473,6 +501,9 @@ func buy_cheat(slot_index: int, target_region_id: String = "") -> Dictionary:
 			if debate_next_mil_bonus > 0:
 				extra_mil += debate_next_mil_bonus
 				debate_next_mil_bonus = 0
+			if secret_overclock_active:
+				cao_mult *= 2
+				secret_overclock_active = false
 	var strike_res: Dictionary = {}
 
 	match cheat["id"]:
@@ -685,6 +716,8 @@ func _advance_to_next_turn() -> void:
 	first_mil_used_turn = false
 	debate_next_mil_bonus = 0
 	temp_power_bonus = 0
+	pact_free_hand_turn = false
+	secret_overclock_active = false
 
 	# v2.1 固定回合开始结算顺序：1.丝路 -> 2.贷款 -> 3.韩信 -> 4.刷新终端
 	var west := _find_region("west")
@@ -799,7 +832,11 @@ func _apply_damage(region_id: String, raw_damage: int, instant_kill: bool, sourc
 		active_threat["interrupted"] = true
 		_modify_morale(5, "破招打断敌军意图", false)
 		_log("⚡ 破招打断【%s】！民心 +5。" % active_threat["title"])
+		interrupt_count += 1
 		threat_interrupted.emit(region_id, "破招成功！民心 +5")
+		if interrupt_count >= 2 and not _interrupt_milestone_given:
+			_interrupt_milestone_given = true
+			_grant_secret_card("连破敌招")
 	if tactical_mode and conquered_now and has_synergy("bingxian_guanjun"):
 		attack_left += 1
 		_log("【兵仙冠军】乘胜追击！额外获得 1 次免费常规进攻！")
@@ -944,6 +981,7 @@ func _check_decree_progress() -> void:
 		completed_decrees[active_decree["act"]] = true
 		_log("👑 完成始皇【%s】！赏赐：%s。" % [active_decree["title"], active_decree["reward"]])
 		decree_completed.emit(active_decree["title"], active_decree["reward"])
+		_grant_secret_card("完成御旨·" + active_decree["title"])
 
 
 func _maybe_trigger_debate() -> void:
@@ -996,5 +1034,97 @@ func resolve_debate(choice: String) -> Dictionary:
 		debate_next_mil_bonus += 30
 		_modify_morale(-6, "朝堂争辩·" + adv["name"], false)
 		_log("你采纳了【%s】的铁血之议：下张军事外挂 +30 伤，民心 -6。" % adv["name"])
+	_emit_state()
+	return {"ok": true}
+
+
+# --- 王者万象棋式「国师秘技炸场」与邪恶冥刻式「始皇密匣暗黑献祭」 ---
+func _grant_secret_card(reason: String) -> void:
+	if not tactical_mode or secret_cards.size() >= 2:
+		return
+	var pool := [
+		{"id": "secret_barrage", "name": "万剑归秦", "desc": "0费不占行动：全图未占领板块齐劈30点天雷，击穿任意洲触发15点连锁余震！"},
+		{"id": "secret_revival", "name": "天命所归", "desc": "0费不占行动：立刻 +25 民心、本回合行动 +1、免费常规进攻 +1！"},
+		{"id": "secret_overclock", "name": "乾坤借势", "desc": "0费不占行动：下一次进攻/军事外挂伤害翻倍(×2)，并免费刷新手牌！"},
+	]
+	var pick: Dictionary = pool[_rng.randi_range(0, pool.size() - 1)].duplicate(true)
+	secret_cards.append(pick)
+	_log("★ 达成【%s】，天降 0 费金色国师秘技【%s】！" % [reason, pick["name"]])
+	secret_card_gained.emit(pick)
+
+
+func cast_secret_card(index: int) -> Dictionary:
+	if not tactical_mode:
+		return {"ok": false, "error": "仅深度博弈模式可用"}
+	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
+		return {"ok": false, "error": "当前状态不可释放秘技"}
+	if index < 0 or index >= secret_cards.size():
+		return {"ok": false, "error": "秘技槽位无效"}
+	var card: Dictionary = secret_cards[index]
+	secret_cards.remove_at(index)
+	match card["id"]:
+		"secret_barrage":
+			_log("⚡ 释放国师秘技【万剑归秦】：天雷齐降六洲！")
+			var any_conquered := false
+			for r in _unconquered_regions():
+				var sr := _apply_damage(r["id"], 30, false, "万剑归秦天雷")
+				if bool(sr.get("conquered", false)):
+					any_conquered = true
+				if game_over_code != "":
+					_emit_state()
+					return {"ok": true, "secret_id": card["id"]}
+			if any_conquered:
+				_log("⚡ 【万剑归秦】触发击穿连锁余震！全图再劈 15 伤害！")
+				for r2 in _unconquered_regions():
+					_apply_damage(r2["id"], 15, false, "万剑连锁余震")
+					if game_over_code != "":
+						break
+		"secret_revival":
+			_modify_morale(25, "国师秘技·天命所归", false)
+			actions_left += 1
+			attack_left += 1
+			_log("★ 释放【天命所归】：民心 +25，行动 +1，常规进攻 +1！")
+		"secret_overclock":
+			secret_overclock_active = true
+			_roll_terminal(false)
+			_log("★ 释放【乾坤借势】：下次攻击伤害 ×2，终端手牌免费重抽！")
+	_emit_state()
+	return {"ok": true, "secret_id": card["id"]}
+
+
+func make_emperor_pact(choice: String) -> Dictionary:
+	if not tactical_mode:
+		return {"ok": false, "error": "仅深度博弈模式可用"}
+	if pact_used:
+		return {"ok": false, "error": "本局始皇密匣已开启过"}
+	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
+		return {"ok": false, "error": "当前状态不可开启密匣"}
+	match choice:
+		"sacrifice":
+			pact_used = true
+			var cost_txt := ""
+			if not advisors.is_empty():
+				var gone: Dictionary = advisors.pop_front()
+				cost_txt = "献祭名臣【%s】" % gone["name"]
+			else:
+				_modify_morale(-20, "始皇密匣·焚鼎献祭", false)
+				cost_txt = "献祭 20 民心"
+				if game_over_code != "":
+					_emit_state()
+					return {"ok": true}
+			pact_free_hand_turn = true
+			actions_left += 1
+			_log("🔥 开启始皇密匣【焚鼎献祭】：%s，本回合全部手牌 0 民心消耗且行动 +1！" % cost_txt)
+			pact_made.emit("焚鼎献祭", "%s → 本回合全手牌免民心 · 行动 +1" % cost_txt)
+		"steal_time":
+			pact_used = true
+			pact_morale_cap_penalty += 25
+			morale = mini(morale, get_morale_cap())
+			patience += 4
+			_log("🔥 开启始皇密匣【盗取天时】：本局民心上限永久 -25，始皇耐心 +4 回合！")
+			pact_made.emit("盗取天时", "民心上限永久 -25 → 始皇耐心 +4 回合 · 获赠国师秘技")
+			_grant_secret_card("始皇密匣·盗取天时")
+		_:
+			return {"ok": false, "error": "未知密匣契约"}
 	_emit_state()
 	return {"ok": true}

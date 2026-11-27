@@ -1,5 +1,5 @@
 extends Control
-## 《大秦：2076》2.5D 咸阳宫暗黑立体桌面与拟物手牌表现层（v3.1 · 深度卡牌博弈与NPC朝堂介入版）
+## 《大秦：2076》2.5D 咸阳宫暗黑立体桌面与拟物手牌表现层（v3.2 · 国师秘技炸场与始皇密匣版）
 ## 严格遵循逻辑与表现分离：仅调用 GameCore 公开方法并订阅信号，不反向篡改核心状态。
 
 var core := GameCore.new()
@@ -129,6 +129,11 @@ var _btn_fleet: Button
 var _btn_pool: Button
 var _btn_mute: Button
 var _btn_cancel_aim: Button
+var _btn_pact: Button
+var _secret_box: HBoxContainer
+var _pact_panel: PanelContainer
+var _pact_btn_a: Button
+var _pact_btn_b: Button
 var _hidden_box: HBoxContainer
 var _act_banner: PanelContainer
 var _act_banner_title: Label
@@ -214,6 +219,8 @@ func _ready() -> void:
 	core.decree_completed.connect(_on_decree_completed)
 	core.debate_triggered.connect(_on_debate_triggered)
 	core.weakness_hit.connect(_on_weakness_hit)
+	core.secret_card_gained.connect(_on_secret_card_gained)
+	core.pact_made.connect(_on_pact_made)
 
 	get_viewport().size_changed.connect(_layout_dynamic_elements)
 	_restart(false)
@@ -502,16 +509,23 @@ func _build_stage_and_ui() -> void:
 	_pop_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_pop_attack = _button(pv, "⚔ 常规进攻", func(): _play_sfx("click"); _result(core.conventional_attack(_selected)), GOLD)
 
-	# 7. 底部中央扇形实体手牌层
+	# 7. 底部中央扇形实体手牌层 + 悬停在手牌上方的 0 费金色国师秘技栏
 	_hand_layer = Control.new()
 	_hand_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_hand_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_hand_layer)
 
+	_secret_box = HBoxContainer.new()
+	_secret_box.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	_secret_box.offset_left = -260; _secret_box.offset_top = -256; _secret_box.offset_right = 212; _secret_box.offset_bottom = -214
+	_secret_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	_secret_box.add_theme_constant_override("separation", 10)
+	add_child(_secret_box)
+
 	# 8. 右下角 CRT 终端指令按键组
 	var crt_cmds := VBoxContainer.new()
 	crt_cmds.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	crt_cmds.offset_left = -224; crt_cmds.offset_top = -170; crt_cmds.offset_right = -18; crt_cmds.offset_bottom = -16
+	crt_cmds.offset_left = -224; crt_cmds.offset_top = -212; crt_cmds.offset_right = -18; crt_cmds.offset_bottom = -16
 	crt_cmds.add_theme_constant_override("separation", 7)
 	add_child(crt_cmds)
 
@@ -519,6 +533,8 @@ func _build_stage_and_ui() -> void:
 	_btn_cancel_aim.visible = false
 	_btn_refresh = _button(crt_cmds, "", func(): _play_sfx("click"); _cancel_aim(); _result(core.refresh_terminal()), CYAN)
 	_btn_fleet = _button(crt_cmds, "", func(): _play_sfx("click"); _cancel_aim(); _result(core.build_fleet()), GOLD)
+	_btn_pact = _button(crt_cmds, "🔥 始皇密匣（限1次）", _open_pact_modal, CRIMSON)
+	_btn_pact.add_theme_color_override("font_color", GOLD)
 	var end_btn := _button(crt_cmds, "结束本回合  ⏭", func(): _play_sfx("chime"); _cancel_aim(); _result(core.end_turn()), GOLD)
 	end_btn.custom_minimum_size.y = 38
 	end_btn.add_theme_color_override("font_color", GOLD)
@@ -719,6 +735,19 @@ func _build_stage_and_ui() -> void:
 	_debate_btn_a = _button(db_box, "", func(): _play_sfx("click"); _debate_panel.hide(); core.resolve_debate("A"), GOLD)
 	_debate_btn_b = _button(db_box, "", func(): _play_sfx("click"); _debate_panel.hide(); core.resolve_debate("B"), CYAN)
 
+	_pact_panel = _make_modal(Vector2(590, 355))
+	var p_box := VBoxContainer.new()
+	p_box.add_theme_constant_override("separation", 10)
+	_pact_panel.add_child(p_box)
+	_label(p_box, "🔥 始皇密匣  /  打破规则的暗黑献祭（每局限 1 次）", 12, CRIMSON)
+	_label(p_box, "「既入咸阳局，便须以代价换天命。」", 19, GOLD)
+	var p_desc := _label(p_box, "高台阴影中的秦始皇向你推来一只玄黑密匣。你可以献祭自身根基，强行改写本局铁律：", 13, Color("#e2ecec"))
+	p_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	p_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_pact_btn_a = _button(p_box, "", func(): _play_sfx("event"); _pact_panel.hide(); _sync_modal_shade(); _result(core.make_emperor_pact("sacrifice")), CRIMSON)
+	_pact_btn_b = _button(p_box, "B. 盗取天时：本局民心上限永久 -25 → 始皇耐心 +4 回合，并获赠 1 张 0 费金色国师秘技", func(): _play_sfx("event"); _pact_panel.hide(); _sync_modal_shade(); _result(core.make_emperor_pact("steal_time")), GOLD)
+	_button(p_box, "合上密匣，暂不交易 (Esc)", func(): _play_sfx("click"); _pact_panel.hide(); _sync_modal_shade(), MUTED)
+
 	_rules_panel = _make_modal(Vector2(580, 350))
 	var r_box := VBoxContainer.new()
 	r_box.add_theme_constant_override("separation", 9)
@@ -832,6 +861,7 @@ func _show_title_curtain() -> void:
 	_codex_panel.hide()
 	_hidden_panel.hide()
 	_debate_panel.hide()
+	_pact_panel.hide()
 	_sync_modal_shade()
 	_title_curtain.modulate.a = 0.0
 	_title_curtain.visible = true
@@ -1294,6 +1324,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_play_sfx("click"); _hidden_panel.hide(); _sync_modal_shade()
 		get_viewport().set_input_as_handled()
 		return
+	if _pact_panel.visible and event.is_action_pressed("ui_cancel"):
+		_play_sfx("click"); _pact_panel.hide(); _sync_modal_shade()
+		get_viewport().set_input_as_handled()
+		return
 	if _replace_panel.visible and event.is_action_pressed("ui_cancel"):
 		_cancel_replace()
 		get_viewport().set_input_as_handled()
@@ -1388,6 +1422,7 @@ func _restart(show_banner: bool = true) -> void:
 	_codex_panel.hide()
 	_hidden_panel.hide()
 	_debate_panel.hide()
+	_pact_panel.hide()
 	_modal_shade.hide()
 	for i in range(2):
 		_bubbles[i].hide()
@@ -1414,6 +1449,7 @@ func _sync_modal_shade() -> void:
 		or _codex_panel.visible
 		or _hidden_panel.visible
 		or _debate_panel.visible
+		or _pact_panel.visible
 		or (not _latest.is_empty() and not _latest.get("pending_debate", {}).is_empty())
 		or (not _latest.is_empty() and (not _latest.pending_event.is_empty() or _latest.game_over_code != ""))
 	)
@@ -1544,6 +1580,10 @@ func _refresh_buff_pills(snap: Dictionary) -> void:
 		items.append(["✦ 羁绊·%s" % syn["name"], GOLD, syn["desc"]])
 	if int(snap.get("debate_next_mil_bonus", 0)) > 0:
 		items.append(["⚔ 铁血之议 +%d伤" % int(snap["debate_next_mil_bonus"]), CRIMSON, "本回合下张军事外挂附加伤害"])
+	if bool(snap.get("secret_overclock_active", false)):
+		items.append(["⚡ 乾坤借势 ×2伤害", GOLD, "本回合下次进攻或军事外挂伤害翻倍"])
+	if bool(snap.get("pact_free_hand_turn", false)):
+		items.append(["🔥 焚鼎献祭·全牌0费", CRIMSON, "本回合所有手牌免民心消耗"])
 	for it in items:
 		var pill := PanelContainer.new()
 		pill.mouse_filter = Control.MOUSE_FILTER_STOP if it.size() >= 3 else Control.MOUSE_FILTER_IGNORE
@@ -1566,6 +1606,18 @@ func _rebuild_hand_cards(animate_deal: bool = false) -> void:
 	_btn_refresh.disabled = _latest.refreshes_left <= 0 or _latest.overheat_no_refresh
 	_btn_fleet.text = "渡海航线已通" if _latest.sea_unlocked else "强征造楼船 (−%d)" % core.get_fleet_cost()
 	_btn_fleet.disabled = _latest.sea_unlocked or _latest.actions_left <= 0
+	var pact_done: bool = bool(_latest.get("pact_used", false))
+	_btn_pact.text = "🔥 密匣已启" if pact_done else "🔥 始皇密匣（逆天改命）"
+	_btn_pact.disabled = pact_done
+	for ch in _secret_box.get_children():
+		ch.queue_free()
+	var scards: Array = _latest.get("secret_cards", [])
+	for si in range(scards.size()):
+		var sc: Dictionary = scards[si]
+		var sb := _button(_secret_box, "★ 0费秘技 · %s" % sc["name"], func(): _play_sfx("chime"); _cancel_aim(); _result(core.cast_secret_card(si)), GOLD)
+		sb.add_theme_stylebox_override("normal", _flat_style(Color(0.16, 0.11, 0.04, 0.94), GOLD, 8, 6))
+		sb.add_theme_color_override("font_color", GOLD)
+		sb.tooltip_text = sc["desc"]
 
 	for i in range(_latest.terminal_cards.size()):
 		var cnode := _create_tactile_card(i)
@@ -2094,3 +2146,37 @@ func _on_debate_triggered(debate: Dictionary) -> void:
 	_debate_btn_b.text = "B. %s" % debate["option_b"]["label"]
 	_debate_panel.show()
 	_sync_modal_shade()
+
+
+func _open_pact_modal() -> void:
+	if _modal_shade.visible or _title_curtain.visible or bool(_latest.get("pact_used", false)):
+		return
+	_play_sfx("event")
+	_popover.hide()
+	var advs: Array = _latest.get("advisors", [])
+	if not advs.is_empty():
+		_pact_btn_a.text = "A. 焚鼎献祭：牺牲【%s】→ 本回合全部手牌 0 民心消耗，且行动 +1" % advs[0]["name"]
+	else:
+		_pact_btn_a.text = "A. 焚鼎献祭：献祭 20 民心 → 本回合全部手牌 0 民心消耗，且行动 +1"
+	_pact_panel.show()
+	_sync_modal_shade()
+
+
+func _on_secret_card_gained(card: Dictionary) -> void:
+	_play_sfx("victory")
+	_screen_flash(GOLD, 0.34, 0.4)
+	_act_banner_title.text = "★ 天降 0 费国师秘技 · %s" % card["name"]
+	_act_banner_sub.text = card["desc"]
+	_act_banner.visible = true
+	_act_banner.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.28)
+	tw.tween_interval(2.2)
+	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(_act_banner.hide)
+
+
+func _on_pact_made(title: String, desc: String) -> void:
+	_screen_flash(CRIMSON, 0.42, 0.45)
+	_shake_strength = 12.0
+	_lbl_ticker.text = "🔥 始皇密匣【%s】：%s" % [title, desc]
