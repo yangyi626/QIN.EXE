@@ -1,5 +1,5 @@
 extends Control
-## 《大秦：2076》2.5D 咸阳宫暗黑立体桌面与拟物手牌表现层（v2.6 · 完整参赛版）
+## 《大秦：2076》2.5D 咸阳宫暗黑立体桌面与拟物手牌表现层（v3.0 · 终极完整参赛版）
 ## 严格遵循逻辑与表现分离：仅调用 GameCore 公开方法并订阅信号，不反向篡改核心状态。
 
 var core := GameCore.new()
@@ -55,6 +55,7 @@ var _tex_end_win: Texture2D
 var _tex_end_tyrant: Texture2D
 var _tex_end_lose: Texture2D
 var _category_icons: Dictionary = {}
+var _landmarks: Dictionary = {}
 
 # 舞台与动画状态
 var _stage: Control
@@ -70,6 +71,8 @@ var _bubble_timers: Array[float] = [0.0, 0.0]
 
 var _anim_time: float = 0.0
 var _parallax_cur := Vector2.ZERO
+var _zoom_cur: float = 1.0
+var _focus_offset_cur := Vector2.ZERO
 var _shake_strength: float = 0.0
 var _projectiles: Array[Dictionary] = []
 var _pulses: Array[Dictionary] = []
@@ -92,6 +95,7 @@ var _prev_patience: int = 12
 var _prev_act: int = 0
 var _last_cards_sig: String = ""
 var _hidden_triggered_count: int = 0
+var _used_nuke: bool = false
 var _selected: String = ""
 var _hovered_region: String = ""
 var _hovered_hidden: String = ""
@@ -104,7 +108,11 @@ var _card_nodes: Array[Control] = []
 var _card_base_pos: Array[Vector2] = []
 var _card_base_rot: Array[float] = [-3.0, 0.0, 3.0]
 var _popover: PanelContainer
+var _pop_img: TextureRect
+var _pop_badge: Label
 var _pop_title: Label
+var _pop_sub: Label
+var _pop_bar: ProgressBar
 var _pop_desc: Label
 var _pop_attack: Button
 var _crt_status: Label
@@ -128,8 +136,15 @@ var _title_curtain: Control
 var _rules_panel: PanelContainer
 var _log_panel: PanelContainer
 var _log_text: Label
+var _codex_panel: PanelContainer
+var _codex_grid: GridContainer
+var _codex_tab_adv: Button
+var _codex_tab_cheat: Button
+var _codex_tab_lands: Button
+var _codex_mode: String = "advisors"
 var _modal_shade: ColorRect
 var _event_panel: PanelContainer
+var _event_img: TextureRect
 var _event_title: Label
 var _event_desc: Label
 var _event_btn_a: Button
@@ -140,6 +155,12 @@ var _ending_grade: Label
 var _ending_title: Label
 var _ending_desc: Label
 var _ending_stats: Label
+var _ending_ach: Label
+var _hidden_panel: PanelContainer
+var _hidden_img: TextureRect
+var _hidden_title: Label
+var _hidden_desc: Label
+var _hidden_reward: Label
 var _replace_panel: PanelContainer
 var _replace_title: Label
 var _replace_btn_0: Button
@@ -161,6 +182,10 @@ func _ready() -> void:
 		"livelihood": load("res://assets/icons/icon_livelihood.jpg"),
 		"blacktech": load("res://assets/icons/icon_blacktech.jpg"),
 	}
+	for lid in ["xianyang", "steppe", "west", "south_asia", "west_asia", "europe", "americas"]:
+		var lp := "res://assets/landmarks/%s.jpg" % lid
+		if ResourceLoader.exists(lp):
+			_landmarks[lid] = load(lp)
 
 	_init_embers()
 	_setup_audio()
@@ -418,17 +443,45 @@ func _build_stage_and_ui() -> void:
 		_bubbles.append(bub)
 		_bubble_labels.append(bl)
 
-	# 6. 地图就地战术情报牌（青铜雕花贴图）
+	# 6. 地图就地实景建筑战区勘察牌（青铜雕花贴图 + 16:9 实景建筑大图）
 	_popover = PanelContainer.new()
 	_popover.visible = false
-	_popover.add_theme_stylebox_override("panel", _plaque_style(16, 14))
+	_popover.add_theme_stylebox_override("panel", _plaque_style(18, 16))
 	add_child(_popover)
 	var pv := VBoxContainer.new()
 	pv.add_theme_constant_override("separation", 6)
 	_popover.add_child(pv)
-	_pop_title = _label(pv, "", 15, GOLD)
-	_pop_desc = _label(pv, "", 12, MUTED)
-	_pop_desc.custom_minimum_size.x = 200
+	var p_hdr := HBoxContainer.new()
+	pv.add_child(p_hdr)
+	_pop_title = _label(p_hdr, "", 16, GOLD)
+	_pop_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var p_close := _button(p_hdr, "✕", func(): _play_sfx("click"); _selected = ""; _popover.hide(), MUTED)
+	p_close.custom_minimum_size = Vector2(28, 26)
+	var img_wrap := PanelContainer.new()
+	img_wrap.add_theme_stylebox_override("panel", _flat_style(Color(0.02, 0.03, 0.04, 0.95), Color(0.55, 0.43, 0.24, 0.8), 2, 4))
+	pv.add_child(img_wrap)
+	var img_holder := Control.new()
+	img_holder.custom_minimum_size = Vector2(316, 178)
+	img_wrap.add_child(img_holder)
+	_pop_img = TextureRect.new()
+	_pop_img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_pop_img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_pop_img.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	img_holder.add_child(_pop_img)
+	var badge_bg := PanelContainer.new()
+	badge_bg.position = Vector2(8, 8)
+	badge_bg.add_theme_stylebox_override("panel", _flat_style(Color(0.03, 0.04, 0.055, 0.86), GOLD, 5, 4))
+	img_holder.add_child(badge_bg)
+	_pop_badge = _label(badge_bg, "", 11, GOLD)
+	_pop_sub = _label(pv, "", 12, CYAN)
+	_pop_bar = ProgressBar.new()
+	_pop_bar.custom_minimum_size = Vector2(316, 7)
+	_pop_bar.show_percentage = false
+	_pop_bar.add_theme_stylebox_override("background", _flat_style(Color(0.07, 0.09, 0.11, 0.92), Color.TRANSPARENT, 0, 3))
+	_pop_bar.add_theme_stylebox_override("fill", _flat_style(CYAN, Color.TRANSPARENT, 0, 3))
+	pv.add_child(_pop_bar)
+	_pop_desc = _label(pv, "", 12, Color("#d4e1e2"))
+	_pop_desc.custom_minimum_size.x = 316
 	_pop_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_pop_attack = _button(pv, "⚔ 常规进攻", func(): _play_sfx("click"); _result(core.conventional_attack(_selected)), GOLD)
 
@@ -484,10 +537,11 @@ func _build_stage_and_ui() -> void:
 
 	var util := HBoxContainer.new()
 	util.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
-	util.offset_left = -356; util.offset_top = 12; util.offset_right = -14; util.offset_bottom = 44
+	util.offset_left = -436; util.offset_top = 12; util.offset_right = -14; util.offset_bottom = 44
 	util.alignment = BoxContainer.ALIGNMENT_END
 	util.add_theme_constant_override("separation", 6)
 	add_child(util)
+	_button(util, "图鉴(C)", _toggle_codex, GOLD)
 	_button(util, "战录(L)", _toggle_logs, GOLD)
 	_button(util, "简则(H)", _toggle_rules, CYAN)
 	_btn_mute = _button(util, "音效", _toggle_mute, CYAN)
@@ -534,10 +588,15 @@ func _build_stage_and_ui() -> void:
 	_modal_shade.hide()
 	add_child(_modal_shade)
 
-	_event_panel = _make_modal(Vector2(540, 310))
+	_event_panel = _make_modal(Vector2(590, 480))
 	var ev_box := VBoxContainer.new()
-	ev_box.add_theme_constant_override("separation", 10)
+	ev_box.add_theme_constant_override("separation", 9)
 	_event_panel.add_child(ev_box)
+	_event_img = TextureRect.new()
+	_event_img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_event_img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_event_img.custom_minimum_size = Vector2(520, 200)
+	ev_box.add_child(_event_img)
 	_label(ev_box, "突发急报  /  历史 × 科技", 12, CYAN)
 	_event_title = _label(ev_box, "", 20, GOLD)
 	_event_desc = _label(ev_box, "", 14, Color("#e4e9e9"))
@@ -546,7 +605,7 @@ func _build_stage_and_ui() -> void:
 	_event_btn_a = _button(ev_box, "", func(): _play_sfx("click"); _event_panel.hide(); core.resolve_event("A"), GOLD)
 	_event_btn_b = _button(ev_box, "", func(): _play_sfx("click"); _event_panel.hide(); core.resolve_event("B"), CYAN)
 
-	_ending_panel = _make_modal(Vector2(610, 520))
+	_ending_panel = _make_modal(Vector2(620, 560))
 	var end_box := VBoxContainer.new()
 	end_box.add_theme_constant_override("separation", 9)
 	_ending_panel.add_child(end_box)
@@ -564,7 +623,9 @@ func _build_stage_and_ui() -> void:
 	_ending_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_ending_stats = _label(end_box, "", 12, CYAN)
 	_ending_stats.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_ending_stats.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_ending_ach = _label(end_box, "", 13, GOLD)
+	_ending_ach.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_ending_ach.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var end_btns := HBoxContainer.new()
 	end_btns.add_theme_constant_override("separation", 10)
 	end_box.add_child(end_btns)
@@ -572,6 +633,23 @@ func _build_stage_and_ui() -> void:
 	btn_re.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var btn_home := _button(end_btns, "返回主屏", func(): _play_sfx("click"); _show_title_curtain(), CYAN)
 	btn_home.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	_hidden_panel = _make_modal(Vector2(590, 460))
+	var h_box := VBoxContainer.new()
+	h_box.add_theme_constant_override("separation", 9)
+	_hidden_panel.add_child(h_box)
+	_hidden_img = TextureRect.new()
+	_hidden_img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_hidden_img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_hidden_img.custom_minimum_size = Vector2(520, 205)
+	h_box.add_child(_hidden_img)
+	_label(h_box, "✦ 守望秘境 · 隐藏奇观触发", 12, CYAN)
+	_hidden_title = _label(h_box, "", 21, GOLD)
+	_hidden_desc = _label(h_box, "", 13, Color("#e4eeee"))
+	_hidden_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hidden_desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_hidden_reward = _label(h_box, "", 15, SAGE)
+	_button(h_box, "收入囊中，继续推演", func(): _play_sfx("click"); _hidden_panel.hide(); _sync_modal_shade(), GOLD)
 
 	_replace_panel = _make_modal(Vector2(520, 290))
 	var rep_box := VBoxContainer.new()
@@ -594,7 +672,7 @@ func _build_stage_and_ui() -> void:
 		"1. 民心既是血条也是货币：军事外挂降维平推但扣民心；民生科技回民心；民心归零立刻大泽乡起义失败。\n" +
 		"2. 12 回合平定六洲：每回合拥有 2 次行动（买卡/召名臣/造楼船/探隐藏关）+ 1 次免费常规进攻。\n" +
 		"3. 首回合高光福利：第 1 回合首次召唤【名臣】或拍出【无人机蜂群】免民心；点击沙盘发光点即可出兵，双击快攻。\n" +
-		"4. 快捷键：1 / 2 / 3 选用手牌 · R 刷新终端 · L 战局实录 · H 规则简则 · Esc 取消瞄准。",
+		"4. 快捷键：1 / 2 / 3 选用手牌 · R 刷新终端 · C 卡牌图鉴 · L 战局实录 · H 规则简则 · Esc 取消瞄准。",
 		13, Color("#e2ecec"))
 	r_txt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	r_txt.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -609,6 +687,29 @@ func _build_stage_and_ui() -> void:
 	_log_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_button(l_box, "关闭战录 (L)", _toggle_logs, GOLD)
+
+	_codex_panel = _make_modal(Vector2(840, 540))
+	var c_box := VBoxContainer.new()
+	c_box.add_theme_constant_override("separation", 10)
+	_codex_panel.add_child(c_box)
+	var c_hdr := HBoxContainer.new()
+	c_hdr.add_theme_constant_override("separation", 10)
+	c_box.add_child(c_hdr)
+	_label(c_hdr, "咸阳藏经阁  /  全 21 张卡牌图鉴", 16, GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_codex_tab_adv = _button(c_hdr, "👑 历史名臣 (9)", func(): _play_sfx("click"); _codex_mode = "advisors"; _populate_codex(), GOLD)
+	_codex_tab_cheat = _button(c_hdr, "⚡ 外挂 (12)", func(): _play_sfx("click"); _codex_mode = "cheats"; _populate_codex(), CYAN)
+	_codex_tab_lands = _button(c_hdr, "🏛 九州舆图 (7)", func(): _play_sfx("click"); _codex_mode = "landmarks"; _populate_codex(), GOLD)
+	_button(c_hdr, "关闭 (C)", _toggle_codex, MUTED)
+	var c_scroll := ScrollContainer.new()
+	c_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	c_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	c_box.add_child(c_scroll)
+	_codex_grid = GridContainer.new()
+	_codex_grid.columns = 3
+	_codex_grid.add_theme_constant_override("h_separation", 12)
+	_codex_grid.add_theme_constant_override("v_separation", 12)
+	_codex_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	c_scroll.add_child(_codex_grid)
 
 	# 13. 电影感开场主屏幕布
 	_title_curtain = Control.new()
@@ -642,8 +743,10 @@ func _build_stage_and_ui() -> void:
 	b_start.custom_minimum_size = Vector2(160, 44)
 	b_start.add_theme_font_size_override("font_size", 17)
 	b_start.add_theme_color_override("font_color", GOLD)
+	var b_codex := _button(tbtns, "📖 卡牌图鉴", func(): _play_sfx("click"); _enter_game(); _toggle_codex(), GOLD)
+	b_codex.custom_minimum_size = Vector2(132, 44)
 	var b_rules := _button(tbtns, "📜 推演简则", func(): _play_sfx("click"); _enter_game(); _toggle_rules(), CYAN)
-	b_rules.custom_minimum_size = Vector2(140, 44)
+	b_rules.custom_minimum_size = Vector2(132, 44)
 
 	_layout_dynamic_elements()
 
@@ -668,6 +771,8 @@ func _show_title_curtain() -> void:
 	_replace_panel.hide()
 	_rules_panel.hide()
 	_log_panel.hide()
+	_codex_panel.hide()
+	_hidden_panel.hide()
 	_sync_modal_shade()
 	_title_curtain.modulate.a = 0.0
 	_title_curtain.visible = true
@@ -677,6 +782,7 @@ func _show_title_curtain() -> void:
 func _toggle_rules() -> void:
 	_play_sfx("click")
 	_log_panel.hide()
+	_codex_panel.hide()
 	_rules_panel.visible = not _rules_panel.visible
 	_sync_modal_shade()
 
@@ -684,12 +790,101 @@ func _toggle_rules() -> void:
 func _toggle_logs() -> void:
 	_play_sfx("click")
 	_rules_panel.hide()
+	_codex_panel.hide()
 	_log_panel.visible = not _log_panel.visible
 	if _log_panel.visible:
 		var arr: Array = _latest.get("logs", [])
 		var slice := arr.slice(maxi(0, arr.size() - 14), arr.size())
 		_log_text.text = "\n".join(slice) if not slice.is_empty() else "暂无战局记录。"
 	_sync_modal_shade()
+
+
+func _toggle_codex() -> void:
+	_play_sfx("click")
+	_rules_panel.hide()
+	_log_panel.hide()
+	_codex_panel.visible = not _codex_panel.visible
+	if _codex_panel.visible:
+		_populate_codex()
+	_sync_modal_shade()
+
+
+func _populate_codex() -> void:
+	for ch in _codex_grid.get_children():
+		ch.queue_free()
+	_codex_tab_adv.modulate = GOLD if _codex_mode == "advisors" else MUTED
+	_codex_tab_cheat.modulate = CYAN if _codex_mode == "cheats" else MUTED
+	_codex_tab_lands.modulate = GOLD if _codex_mode == "landmarks" else MUTED
+	if _codex_mode == "advisors":
+		for adv in _game_data.get("advisors", []):
+			var quote := ""
+			var lines_for_adv: Variant = _lines_data.get("advisors", {}).get(adv["id"], {})
+			if lines_for_adv is Dictionary:
+				for k in lines_for_adv.keys():
+					var arr: Variant = lines_for_adv[k]
+					if arr is Array and not arr.is_empty():
+						quote = "「%s」" % str(arr[0])
+						break
+			_codex_grid.add_child(_make_codex_card(
+				adv["name"], "名臣 · 耗%d民心" % int(adv["cost"]), GOLD,
+				adv.get("portrait", ""), adv["skill"] + ("\n" + quote if quote != "" else "")
+			))
+	elif _codex_mode == "landmarks":
+		_codex_grid.add_child(_make_codex_card("大秦 · 咸阳宫", "龙兴本营 · 常规战力 %d" % int(_latest.get("conventional_power", 20)), GOLD, "res://assets/landmarks/xianyang.jpg", "咸阳宫与万里长城：玄黑帝国核心，点击沙盘本营可随时巡视国力。"))
+		for r in _latest.get("regions", _game_data.get("regions", [])):
+			var conq: bool = bool(r.get("conquered", false))
+			var tag := "◆ 已归玄黑" if conq else ("守军 %d · 效率 %d%%" % [int(r.get("hp", 0)), int(round(float(r.get("efficiency", 1.0)) * 100.0))])
+			_codex_grid.add_child(_make_codex_card(r["name"], tag, GOLD if conq else CYAN, r.get("landmark", ""), str(r.get("landmark_name", r["coverage"])) + " — " + r["reward"]))
+	else:
+		for ch_d in _game_data.get("cheats", []):
+			var kind: String = {"military":"军事", "livelihood":"民生", "blacktech":"奇术"}[ch_d["category"]]
+			var tint: Color = {"军事":CYAN, "民生":SAGE, "奇术":VIOLET}[kind]
+			var dm: int = int(ch_d["morale_delta"])
+			var tag := "%s · %s%s" % [kind, "%+d民心" % dm if dm != 0 else "免民心", " · 限1次" if bool(ch_d.get("one_time", false)) else ""]
+			_codex_grid.add_child(_make_codex_card(
+				ch_d["name"], tag, tint, ch_d.get("art", ""), ch_d["desc"]
+			))
+
+
+func _make_codex_card(title: String, meta: String, tint: Color, art_path: String, desc: String) -> Control:
+	var card := Control.new()
+	card.custom_minimum_size = Vector2(240, 212)
+	var bg := TextureRect.new()
+	bg.texture = _tex_card
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	card.add_child(bg)
+	var rim := ColorRect.new()
+	rim.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	rim.offset_left = 14; rim.offset_top = 10; rim.offset_right = -14; rim.offset_bottom = 13
+	rim.color = tint
+	card.add_child(rim)
+	var vb := VBoxContainer.new()
+	vb.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vb.offset_left = 16; vb.offset_top = 18; vb.offset_right = -16; vb.offset_bottom = -14
+	vb.add_theme_constant_override("separation", 5)
+	card.add_child(vb)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 8)
+	vb.add_child(top)
+	if art_path != "" and ResourceLoader.exists(art_path):
+		var pic := TextureRect.new()
+		pic.texture = load(art_path)
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pic.custom_minimum_size = Vector2(68, 68)
+		top.add_child(pic)
+	var tv := VBoxContainer.new()
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.alignment = BoxContainer.ALIGNMENT_CENTER
+	top.add_child(tv)
+	_label(tv, title, 16, Color.WHITE)
+	_label(tv, meta, 11, tint)
+	var dl := _label(vb, desc, 11, Color("#d4e1e2"))
+	dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	dl.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	return card
 
 
 func _show_act_banner(act_num: int) -> void:
@@ -749,7 +944,7 @@ func _process(delta: float) -> void:
 		var norm := Vector2((m.x / vp.x) * 2.0 - 1.0, (m.y / vp.y) * 2.0 - 1.0).clamp(Vector2(-1, -1), Vector2(1, 1))
 		_parallax_cur = _parallax_cur.lerp(Vector2(-norm.x * 13.0, -norm.y * 7.0), minf(1.0, delta * 5.0))
 
-		var stage_m := m - _stage.position
+		var stage_m := (m - _stage.position) / maxf(0.5, _stage.scale.x)
 		var found := ""
 		var found_h := ""
 		if not _modal_shade.visible and not _title_curtain.visible:
@@ -759,18 +954,34 @@ func _process(delta: float) -> void:
 					found_h = hid
 					break
 			if found_h == "":
-				for rid in UV_REGIONS.keys():
-					if _uv_to_stage(UV_REGIONS[rid]).distance_to(stage_m) <= 26.0:
-						found = rid
-						break
+				if _uv_to_stage(UV_XIANYANG).distance_to(stage_m) <= 24.0:
+					found = "xianyang"
+				else:
+					for rid in UV_REGIONS.keys():
+						if _uv_to_stage(UV_REGIONS[rid]).distance_to(stage_m) <= 26.0:
+							found = rid
+							break
 		_hovered_region = found
 		_hovered_hidden = found_h
+
+	# 选中板块或咸阳时平滑推近镜头聚焦该大陆，取消选中时柔和拉回全景
+	var target_zoom := 1.0
+	var target_focus := Vector2.ZERO
+	if _popover.visible and _selected != "" and not _modal_shade.visible and not _title_curtain.visible:
+		var f_uv: Vector2 = UV_XIANYANG if _selected == "xianyang" else UV_REGIONS.get(_selected, Vector2(0.5, 0.5))
+		target_zoom = 1.13
+		var f_pt := _uv_to_stage(f_uv)
+		target_focus = (vp * Vector2(0.36, 0.50)) - f_pt * target_zoom
+		target_focus = target_focus.clamp(Vector2(-vp.x * 0.22, -vp.y * 0.16), Vector2(vp.x * 0.12, vp.y * 0.10))
+	_zoom_cur = lerpf(_zoom_cur, target_zoom, minf(1.0, delta * 5.2))
+	_focus_offset_cur = _focus_offset_cur.lerp(target_focus, minf(1.0, delta * 5.2))
+	_stage.scale = Vector2(_zoom_cur, _zoom_cur)
 
 	var shake := Vector2.ZERO
 	if _shake_strength > 0.2:
 		shake = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * _shake_strength
 		_shake_strength = maxf(0.0, _shake_strength - delta * 26.0)
-	_stage.position = _parallax_cur + shake
+	_stage.position = _parallax_cur + _focus_offset_cur + shake
 
 	for em in _embers:
 		em["life"] = float(em["life"]) + delta * float(em["speed"])
@@ -804,10 +1015,11 @@ func _process(delta: float) -> void:
 		if float(pu["t"]) >= 1.0:
 			_pulses.remove_at(idx)
 
-	if _popover.visible and UV_REGIONS.has(_selected):
-		var sp := _uv_to_stage(UV_REGIONS[_selected]) + _stage.position
-		var px := clampf(sp.x + 28.0, 16.0, vp.x - _popover.size.x - 18.0)
-		var py := clampf(sp.y - _popover.size.y * 0.5, 66.0, vp.y - _popover.size.y - 210.0)
+	if _popover.visible and (_selected == "xianyang" or UV_REGIONS.has(_selected)):
+		var f_uv: Vector2 = UV_XIANYANG if _selected == "xianyang" else UV_REGIONS[_selected]
+		var sp := _uv_to_stage(f_uv) * _stage.scale.x + _stage.position
+		var px := clampf(sp.x + 32.0, 16.0, vp.x - _popover.size.x - 18.0)
+		var py := clampf(sp.y - _popover.size.y * 0.5, 62.0, vp.y - _popover.size.y - 196.0)
 		_popover.position = Vector2(px, py).round()
 
 	_stage_fx.queue_redraw()
@@ -842,10 +1054,16 @@ func _draw_stage_fx() -> void:
 		var alpha := sin(life * PI) * 0.72
 		_stage_fx.draw_circle(_uv_to_stage(uv), float(em["size"]) * (1.0 - life * 0.4), Color(fire_col, alpha))
 
-	# 2. 咸阳本土微光点 + 6 大板块纯发光玄黑/鎏金印记点 + 受损迷你血条
+	# 2. 咸阳本土微缩宫殿地标 + 6 大板块微缩文明建筑剪影 + 受损迷你血条
 	var cap := _uv_to_stage(UV_XIANYANG)
-	_stage_fx.draw_circle(cap, 12.0 + 2.0 * sin(_anim_time * 3.0), Color(GOLD, 0.2))
-	_stage_fx.draw_circle(cap, 4.5, GOLD)
+	var cap_hov := (_hovered_region == "xianyang" or _selected == "xianyang")
+	_stage_fx.draw_circle(cap, (16.0 if cap_hov else 12.0) + 2.0 * sin(_anim_time * 3.0), Color(GOLD, 0.26 if cap_hov else 0.18))
+	_draw_mini_landmark(cap, "xianyang", GOLD)
+	if cap_hov:
+		var ct := "大秦 · 咸阳宫"
+		var csz := theme.default_font.get_string_size(ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 13)
+		_stage_fx.draw_string(theme.default_font, cap + Vector2(-csz.x * 0.5 + 1, -18), ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0, 0, 0, 0.95))
+		_stage_fx.draw_string(theme.default_font, cap + Vector2(-csz.x * 0.5, -19), ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, GOLD)
 
 	var font := theme.default_font
 	for r in _latest.regions:
@@ -870,8 +1088,8 @@ func _draw_stage_fx() -> void:
 			var pulse := 1.0 + 0.15 * sin(_anim_time * 4.5) if (can_hit or is_hov) else 1.0
 			var rad := (13.0 if is_hov else 9.0) * pulse
 			_stage_fx.draw_circle(p, rad + 4.0, Color(col, 0.16 if is_hov else 0.08))
-			_stage_fx.draw_circle(p, 5.0, col)
-			_stage_fx.draw_arc(p, rad, 0.0, TAU, 24, Color(col, 0.9), 2.0 if is_hov else 1.4, true)
+			_stage_fx.draw_arc(p, rad, 0.0, TAU, 24, Color(col, 0.85), 2.0 if is_hov else 1.4, true)
+			_draw_mini_landmark(p, rid, col)
 
 			# 受损板块自动显示极简迷你血条（一眼掌握战局）
 			var hp: int = int(r["hp"])
@@ -934,8 +1152,8 @@ func _draw_stage_fx() -> void:
 	# 5. 瞄准指向卡动态战术弧线
 	if _pending_cheat_slot >= 0 and _pending_cheat_slot < _card_nodes.size():
 		var card_n := _card_nodes[_pending_cheat_slot]
-		var start_p := card_n.position + Vector2(card_n.size.x * 0.5, 10.0) - _stage.position
-		var end_p := get_viewport().get_mouse_position() - _stage.position
+		var start_p := (card_n.position + Vector2(card_n.size.x * 0.5, 10.0) - _stage.position) / maxf(0.5, _stage.scale.x)
+		var end_p := (get_viewport().get_mouse_position() - _stage.position) / maxf(0.5, _stage.scale.x)
 		var snapped := false
 		if _hovered_region != "" and UV_REGIONS.has(_hovered_region):
 			end_p = _uv_to_stage(UV_REGIONS[_hovered_region])
@@ -951,6 +1169,48 @@ func _draw_stage_fx() -> void:
 		_stage_fx.draw_arc(end_p, 16.0 + 3.5 * sin(_anim_time * 8.0), 0.0, TAU, 28, lcol, 2.2, true)
 
 
+func _draw_mini_landmark(p: Vector2, id: String, col: Color) -> void:
+	var dark := Color(0.05, 0.05, 0.06, 0.92)
+	match id:
+		"xianyang":
+			# 重檐咸阳宫殿剪影
+			_stage_fx.draw_colored_polygon(PackedVector2Array([p + Vector2(-10, 3), p + Vector2(10, 3), p + Vector2(7, -2), p + Vector2(-7, -2)]), dark)
+			_stage_fx.draw_colored_polygon(PackedVector2Array([p + Vector2(-12, -2), p + Vector2(12, -2), p + Vector2(0, -10)]), col)
+			_stage_fx.draw_line(p + Vector2(-9, 3), p + Vector2(9, 3), col, 1.5)
+		"steppe":
+			# 匈奴苍狼王帐穹顶剪影
+			_stage_fx.draw_colored_polygon(PackedVector2Array([p + Vector2(-8, 4), p + Vector2(8, 4), p + Vector2(6, -2), p + Vector2(0, -8), p + Vector2(-6, -2)]), col)
+			_stage_fx.draw_line(p + Vector2(0, -8), p + Vector2(0, -12), GOLD, 1.4)
+		"west":
+			# 玉门关城垛烽火台剪影
+			_stage_fx.draw_rect(Rect2(p + Vector2(-8, -4), Vector2(16, 8)), col)
+			_stage_fx.draw_rect(Rect2(p + Vector2(-8, -8), Vector2(4, 4)), col)
+			_stage_fx.draw_rect(Rect2(p + Vector2(-2, -8), Vector2(4, 4)), col)
+			_stage_fx.draw_rect(Rect2(p + Vector2(4, -8), Vector2(4, 4)), col)
+		"south_asia":
+			# 孔雀王朝大佛塔穹顶剪影
+			_stage_fx.draw_circle(p + Vector2(0, 1), 6.5, col)
+			_stage_fx.draw_rect(Rect2(p + Vector2(-8, 1), Vector2(16, 4)), col)
+			_stage_fx.draw_line(p + Vector2(0, -5), p + Vector2(0, -10), GOLD, 1.6)
+		"west_asia":
+			# 双金字塔剪影
+			_stage_fx.draw_colored_polygon(PackedVector2Array([p + Vector2(-10, 4), p + Vector2(2, 4), p + Vector2(-4, -8)]), col)
+			_stage_fx.draw_colored_polygon(PackedVector2Array([p + Vector2(-1, 4), p + Vector2(10, 4), p + Vector2(4.5, -5)]), col.darkened(0.2))
+		"europe":
+			# 罗马斗兽场与石柱拱门剪影
+			_stage_fx.draw_rect(Rect2(p + Vector2(-9, -4), Vector2(18, 8)), col)
+			_stage_fx.draw_rect(Rect2(p + Vector2(-6, -1), Vector2(3, 5)), dark)
+			_stage_fx.draw_rect(Rect2(p + Vector2(-1.5, -1), Vector2(3, 5)), dark)
+			_stage_fx.draw_rect(Rect2(p + Vector2(3, -1), Vector2(3, 5)), dark)
+		"americas":
+			# 玛雅阶梯金字塔剪影
+			_stage_fx.draw_rect(Rect2(p + Vector2(-9, 1), Vector2(18, 4)), col)
+			_stage_fx.draw_rect(Rect2(p + Vector2(-6.5, -3), Vector2(13, 4)), col)
+			_stage_fx.draw_rect(Rect2(p + Vector2(-4, -7), Vector2(8, 4)), col)
+		_:
+			_stage_fx.draw_circle(p, 5.0, col)
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if _title_curtain.visible:
 		if event.is_action_pressed("ui_accept"):
@@ -963,6 +1223,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if _log_panel.visible and (event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and event.keycode == KEY_L)):
 		_toggle_logs()
+		get_viewport().set_input_as_handled()
+		return
+	if _codex_panel.visible and (event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and event.keycode == KEY_C)):
+		_toggle_codex()
+		get_viewport().set_input_as_handled()
+		return
+	if _hidden_panel.visible and (event.is_action_pressed("ui_cancel") or event.is_action_pressed("ui_accept")):
+		_play_sfx("click"); _hidden_panel.hide(); _sync_modal_shade()
 		get_viewport().set_input_as_handled()
 		return
 	if _replace_panel.visible and event.is_action_pressed("ui_cancel"):
@@ -1002,6 +1270,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				_toggle_logs()
 				get_viewport().set_input_as_handled()
 				return
+			KEY_C:
+				_toggle_codex()
+				get_viewport().set_input_as_handled()
+				return
 
 	if event.is_action_pressed("ui_cancel"):
 		if _pending_cheat_slot >= 0:
@@ -1012,13 +1284,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			_popover.hide()
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		var stage_m: Vector2 = event.position - _stage.position
+		var stage_m: Vector2 = (event.position - _stage.position) / maxf(0.5, _stage.scale.x)
 		var hvis_c: Dictionary = _latest.get("hidden_visible", {})
 		for hid in UV_HIDDEN.keys():
 			if bool(hvis_c.get(hid, false)) and _uv_to_stage(UV_HIDDEN[hid]).distance_to(stage_m) <= 22.0:
 				_play_sfx("click"); _cancel_aim(); _result(core.trigger_hidden(hid))
 				get_viewport().set_input_as_handled()
 				return
+		if _pending_cheat_slot < 0 and _uv_to_stage(UV_XIANYANG).distance_to(stage_m) <= 24.0:
+			_play_sfx("click")
+			_selected = "xianyang"
+			_refresh_popover()
+			get_viewport().set_input_as_handled()
+			return
 		for rid in UV_REGIONS.keys():
 			if _uv_to_stage(UV_REGIONS[rid]).distance_to(stage_m) <= 26.0:
 				_on_region_clicked(rid)
@@ -1039,12 +1317,15 @@ func _restart(show_banner: bool = true) -> void:
 	_prev_act = 0
 	_last_cards_sig = ""
 	_hidden_triggered_count = 0
+	_used_nuke = false
 	_popover.hide()
 	_ending_panel.hide()
 	_event_panel.hide()
 	_replace_panel.hide()
 	_rules_panel.hide()
 	_log_panel.hide()
+	_codex_panel.hide()
+	_hidden_panel.hide()
 	_modal_shade.hide()
 	for i in range(2):
 		_bubbles[i].hide()
@@ -1068,6 +1349,8 @@ func _sync_modal_shade() -> void:
 		or _replace_panel.visible
 		or _rules_panel.visible
 		or _log_panel.visible
+		or _codex_panel.visible
+		or _hidden_panel.visible
 		or (not _latest.is_empty() and (not _latest.pending_event.is_empty() or _latest.game_over_code != ""))
 	)
 
@@ -1311,19 +1594,25 @@ func _create_tactile_card(slot: int) -> Control:
 	bl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var art_tex: Texture2D = null
-	if advisor and ResourceLoader.exists(data.portrait):
-		art_tex = load(data.portrait)
+	if advisor and ResourceLoader.exists(data.get("portrait", "")):
+		art_tex = load(data["portrait"])
+	elif not advisor and ResourceLoader.exists(data.get("art", "")):
+		art_tex = load(data["art"])
 	elif not advisor and _category_icons.has(data.category):
 		art_tex = _category_icons[data.category]
 	if art_tex != null:
+		var pframe := PanelContainer.new()
+		pframe.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		pframe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pframe.add_theme_stylebox_override("panel", _flat_style(Color(0.03, 0.04, 0.05, 0.9), Color(tint, 0.7), 2, 4))
+		body.add_child(pframe)
 		var pr := TextureRect.new()
 		pr.texture = art_tex
 		pr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		pr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		pr.custom_minimum_size = Vector2(58, 58)
-		pr.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		pr.custom_minimum_size = Vector2(66, 66)
 		pr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		body.add_child(pr)
+		pframe.add_child(pr)
 
 	var tl := _label(body, data.name, 16, Color.WHITE)
 	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1472,18 +1761,50 @@ func _refresh_popover() -> void:
 	_popover.hide()
 	if _selected == "" or _pending_cheat_slot >= 0 or _latest.is_empty():
 		return
+	if _selected == "xianyang":
+		_popover.show()
+		_pop_img.texture = _landmarks.get("xianyang", null)
+		_pop_title.text = "大秦 · 咸阳本土"
+		_pop_badge.text = "◆ 帝国龙兴之地 · 玄黑本营"
+		_pop_badge.modulate = GOLD
+		_pop_sub.text = "咸阳宫与万里长城 · 常规秦军战力 %d" % int(_latest.conventional_power)
+		_pop_bar.max_value = int(_latest.morale_cap)
+		_pop_bar.value = int(_latest.morale)
+		_pop_bar.add_theme_stylebox_override("fill", _flat_style(GOLD, Color.TRANSPARENT, 0, 3))
+		var adv_list := []
+		for a in _latest.get("advisors", []):
+			adv_list.append(a["name"])
+		_pop_desc.text = "在场名臣：%s\n渡海航线：%s · 已统一 %d/6 大洲" % [
+			"、".join(adv_list) if not adv_list.is_empty() else "暂无（可从下方手牌召唤）",
+			"已打通" if bool(_latest.sea_unlocked) else "未开通",
+			int(_latest.conquered_count)
+		]
+		_pop_attack.hide()
+		return
+
 	for r in _latest.regions:
 		if r["id"] != _selected:
 			continue
 		_popover.show()
+		_pop_img.texture = _landmarks.get(r["id"], null)
+		var lm_name: String = str(r.get("landmark_name", r["coverage"]))
 		_pop_title.text = "%s · %s" % [r["name"], "已归玄黑" if r["conquered"] else "守军 %d/%d" % [int(r["hp"]), int(r["max_hp"])]]
+		_pop_bar.max_value = int(r["max_hp"])
+		_pop_bar.value = int(r["max_hp"]) if r["conquered"] else int(r["hp"])
+		_pop_bar.add_theme_stylebox_override("fill", _flat_style(GOLD if r["conquered"] else CYAN, Color.TRANSPARENT, 0, 3))
 		if r["conquered"]:
+			_pop_badge.text = "◆ 大秦郡县已设 · 归入玄黑"
+			_pop_badge.modulate = GOLD
+			_pop_sub.text = "%s（%s）" % [lm_name, r["coverage"]]
 			_pop_desc.text = r["reward"]
 			_pop_attack.hide()
 		else:
 			var ready := core.can_attack_region(r["id"])
 			var eff := 1.0 if r["id"] == "south_asia" and _latest.penicillin_turn else float(r["efficiency"])
 			var dmg := floori(eff * _latest.conventional_power)
+			_pop_badge.text = "⚔ 敌境实景侦查 · 常规效率 %d%%" % int(round(eff * 100.0))
+			_pop_badge.modulate = CYAN
+			_pop_sub.text = "%s（%s）" % [lm_name, r["coverage"]]
 			_pop_attack.show()
 			_pop_attack.text = "⚔ 常规进攻 (−%d 战力)" % dmg
 			_pop_attack.disabled = not ready or _latest.attack_left <= 0 or _latest.education_turn
@@ -1494,7 +1815,7 @@ func _refresh_popover() -> void:
 			elif _latest.attack_left <= 0:
 				_pop_desc.text = "本回合常规进攻已用完，可用下方军事手牌。"
 			else:
-				_pop_desc.text = "%s（再次点击据点直接出兵）" % r["reward"]
+				_pop_desc.text = "%s（再次点击据点也可直接出兵）" % r["reward"]
 
 
 func _spawn_float_text(stage_pos: Vector2, text: String, col: Color) -> void:
@@ -1515,6 +1836,8 @@ func _result(res: Dictionary) -> void:
 
 func _on_strike_performed(region_id: String, damage: int, source: String, conquered: bool) -> void:
 	var is_nuke := damage >= 500 or source.find("玉玺") >= 0
+	if is_nuke:
+		_used_nuke = true
 	_play_sfx("conquer" if conquered else "strike")
 	_shake_strength = 22.0 if is_nuke else (11.0 if conquered else 5.5)
 	if is_nuke:
@@ -1549,14 +1872,31 @@ func _on_advisor_spoke(aid: String, advisor_name: String, line: String) -> void:
 func _on_hidden_triggered(hidden_id: String, reward_text: String) -> void:
 	_hidden_triggered_count += 1
 	_play_sfx("summon")
-	_screen_flash(CYAN, 0.25, 0.35)
+	_screen_flash(CYAN, 0.28, 0.38)
 	_pulses.append({"pos": _uv_to_stage(UV_XIANYANG), "col": GOLD, "t": 0.0, "max_r": 74.0})
-	_lbl_ticker.text = "✦ 隐藏关【%s】：%s" % [hidden_id, reward_text]
+	_popover.hide()
+	var h_info: Dictionary = {}
+	for h in _game_data.get("hidden_levels", []):
+		if h["id"] == hidden_id:
+			h_info = h
+			break
+	var h_art: String = h_info.get("art", "")
+	if h_art != "" and ResourceLoader.exists(h_art):
+		_hidden_img.texture = load(h_art)
+	_hidden_title.text = str(h_info.get("name", hidden_id))
+	_hidden_desc.text = str(h_info.get("story", "你在沙盘边缘发掘出一处尘封的跨时空秘境。"))
+	_hidden_reward.text = "✦ 秘境收获：%s" % reward_text
+	_hidden_panel.show()
+	_sync_modal_shade()
+	_lbl_ticker.text = "✦ 隐藏关【%s】：%s" % [_hidden_title.text, reward_text]
 
 
 func _on_event_triggered(ev: Dictionary) -> void:
 	_play_sfx("event")
 	_popover.hide()
+	var e_art: String = ev.get("art", "")
+	if e_art != "" and ResourceLoader.exists(e_art):
+		_event_img.texture = load(e_art)
 	_event_title.text = ev["title"]
 	_event_desc.text = ev["desc"]
 	_event_btn_a.text = "A. %s" % ev["option_a"]["label"]
@@ -1566,6 +1906,10 @@ func _on_event_triggered(ev: Dictionary) -> void:
 
 
 func _on_game_ended(code: String, data: Dictionary) -> void:
+	# GameCore emits game_ended before the last state_changed notification.
+	var final_state := core.get_snapshot()
+	var final_morale := int(final_state.morale)
+	var final_turn := int(final_state.turn)
 	var won := code.begins_with("win_")
 	var is_sage := (code == "win_sage")
 	_play_sfx("victory" if is_sage else "defeat")
@@ -1579,7 +1923,7 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 		_ending_cg.texture = _tex_end_lose
 
 	var grade := "C · 历史回响"
-	if code == "win_sage" and _prev_morale >= 80:
+	if code == "win_sage" and final_morale >= 80:
 		grade = "S · 盛世千古"
 	elif code == "win_sage":
 		grade = "A · 守望大同"
@@ -1587,7 +1931,7 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 		grade = "B · 赛博霸业"
 
 	var adv_names := []
-	for a in _latest.get("advisors", []):
+	for a in final_state.advisors:
 		adv_names.append(a["name"])
 	var roster := "、".join(adv_names) if not adv_names.is_empty() else "孤身推演"
 
@@ -1595,11 +1939,25 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 	_ending_title.text = "%s" % data.get("title", "终局")
 	_ending_desc.text = "%s" % data.get("prompt", "")
 	_ending_stats.text = "本局战报：历时 %d 回合 · 统一 %d/6 洲 · 终局民心 %d · 隐藏探索 %d 次\n在场名臣：%s" % [
-		int(_latest.get("turn", 1)),
-		int(_latest.get("conquered_count", 0)),
-		_prev_morale,
+		final_turn,
+		int(final_state.conquered_count),
+		final_morale,
 		_hidden_triggered_count,
 		roster,
 	]
+	var achs := []
+	if code == "win_sage" and final_morale >= 80:
+		achs.append("🏆 万民归心")
+	if won and final_turn <= 8:
+		achs.append("⚡ 闪电一统")
+	if _hidden_triggered_count >= 1:
+		achs.append("🔍 守望秘境")
+	if won and core.has_advisor("tanghe"):
+		achs.append("🏯 筑城守望(汤和)")
+	if _used_nuke:
+		achs.append("☢ 核平天下")
+	if won and adv_names.size() >= 2:
+		achs.append("👑 不朽双壁")
+	_ending_ach.text = "本局解锁勋章：" + ("  ".join(achs) if not achs.is_empty() else "尚无勋章（下次试试触发隐藏关或带名臣通关！）")
 	_ending_panel.show()
 	_sync_modal_shade()

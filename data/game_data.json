@@ -33,8 +33,14 @@
       "efficiency": 1.0,
       "prereq": "",
       "requires_sea": false,
-      "pos3d": [3.08, 0.0, -2.05],
-      "reward": "新手练手区，常规秦军即可轻松拿下"
+      "pos3d": [
+        3.08,
+        0.0,
+        -2.05
+      ],
+      "reward": "新手练手区，常规秦军即可轻松拿下",
+      "landmark": "res://assets/landmarks/steppe.jpg",
+      "landmark_name": "匈奴苍狼王帐要塞"
     },
     {
       "id": "west",
@@ -44,8 +50,14 @@
       "efficiency": 1.0,
       "prereq": "",
       "requires_sea": false,
-      "pos3d": [1.82, 0.0, -1.1],
-      "reward": "每回合开始额外 +5 民心（丝绸之路商贸红利）"
+      "pos3d": [
+        1.82,
+        0.0,
+        -1.1
+      ],
+      "reward": "每回合开始额外 +5 民心（丝绸之路商贸红利）",
+      "landmark": "res://assets/landmarks/west.jpg",
+      "landmark_name": "丝路玉门关与绿洲古城"
     },
     {
       "id": "south_asia",
@@ -55,8 +67,14 @@
       "efficiency": 0.75,
       "prereq": "west",
       "requires_sea": false,
-      "pos3d": [3.22, 0.0, 0.79],
-      "reward": "使用【青霉素】当回合效率恢复为 1.00"
+      "pos3d": [
+        3.22,
+        0.0,
+        0.79
+      ],
+      "reward": "使用【青霉素】当回合效率恢复为 1.00",
+      "landmark": "res://assets/landmarks/south_asia.jpg",
+      "landmark_name": "孔雀王朝巨殿与大佛塔港"
     },
     {
       "id": "west_asia",
@@ -66,8 +84,14 @@
       "efficiency": 0.6,
       "prereq": "west",
       "requires_sea": false,
-      "pos3d": [0.7, 0.0, 0.0],
-      "reward": "敌军机动强，无人机或霍去病有奇效"
+      "pos3d": [
+        0.7,
+        0.0,
+        0.0
+      ],
+      "reward": "敌军机动强，无人机或霍去病有奇效",
+      "landmark": "res://assets/landmarks/west_asia.jpg",
+      "landmark_name": "安息波斯巨城与尼罗河金字塔"
     },
     {
       "id": "europe",
@@ -77,8 +101,14 @@
       "efficiency": 0.3,
       "prereq": "west_asia",
       "requires_sea": false,
-      "pos3d": [0.28, 0.0, -1.5],
-      "reward": "终极军事 Boss"
+      "pos3d": [
+        0.28,
+        0.0,
+        -1.5
+      ],
+      "reward": "终极军事 Boss",
+      "landmark": "res://assets/landmarks/europe.jpg",
+      "landmark_name": "罗马斗兽场与万神殿军团要塞"
     },
     {
       "id": "americas",
@@ -88,8 +118,14 @@
       "efficiency": 1.0,
       "prereq": "",
       "requires_sea": true,
-      "pos3d": [-3.64, 0.0, -0.24],
-      "reward": "须先购买跨海铁甲舰或强征造楼船渡海"
+      "pos3d": [
+        -3.64,
+        0.0,
+        -0.24
+      ],
+      "reward": "须先购买跨海铁甲舰或强征造楼船渡海",
+      "landmark": "res://assets/landmarks/americas.jpg",
+      "landmark_name": "迷雾雨林玛雅阶梯神庙"
     }
   ],
   "advisors": [
@@ -176,7 +212,8 @@
       "one_time": false,
       "needs_target": false,
       "mvp": true,
-      "desc": "稳住基本盘，沙盘长出金色麦浪"
+      "desc": "稳住基本盘，沙盘长出金色麦浪",
+      "art": "res://assets/cheats/rice.jpg"
     },
     {
       "id": "penicillin",
@@ -187,7 +224,8 @@
       "one_time": false,
       "needs_target": false,
       "mvp": true,
-      "desc": "治愈瘟疫，当回合南亚与大洋常规进攻效率恢复为 1.00"
+      "desc": "治愈瘟疫，当回合南亚与大洋常规进攻效率恢复为 1.00",
+      "art": "res://assets/cheats/penicillin.jpg"
     },
     {
       "id": "cement_road",
@@ -198,7 +236,8 @@
       "one_time": true,
       "needs_target": false,
       "mvp": true,
-      "desc": "永久提升常规秦军战力 +10（每局限买1次）"
+      "desc": "永久提升常规秦军战力 +10（每局限买1次）",
+      "art": "res://assets/cheats/cement_road.jpg"
     },
     {
       "id": "education",
@@ -209,7 +248,8 @@
       "one_time": false,
       "needs_target": false,
       "mvp": false,
-      "desc": "大幅回民心，须在当回合常规进攻前购买，且本回合无法常规进攻"
+      "desc": "大幅回民心，须在当回合常规进攻前购买，且本回合无法常规进攻",
+      "art": "res://assets/cheats/education.jpg"
     },
     {
       "id": "drone",
@@ -220,7 +260,8 @@
       "one_time": false,
       "needs_target": true,
       "mvp": true,
-      "desc": "对指定板块造成 45 战力打击（青色光轨演出）"
+      "desc": "对指定板块造成 45 战力打击（青色光轨演出）",
+      "art": "res://assets/cheats/drone.jpg"
     },
     {
       "id": "artillery",
@@ -231,7 +272,8 @@
       "one_time": false,
       "needs_target": true,
       "mvp": true,
-      "desc": "对指定板块造成 75 战力毁灭打击"
+      "desc": "对指定板块造成 75 战力毁灭打击",
+      "art": "res://assets/cheats/artillery.jpg"
     },
     {
       "id": "ak47",
@@ -242,7 +284,8 @@
       "one_time": true,
       "needs_target": false,
       "mvp": false,
-      "desc": "永久强化常规秦军每次进攻战力 +30（曹操在场+60），每局限买1次"
+      "desc": "永久强化常规秦军每次进攻战力 +30（曹操在场+60），每局限买1次",
+      "art": "res://assets/cheats/ak47.jpg"
     },
     {
       "id": "ironclad",
@@ -253,7 +296,8 @@
       "one_time": true,
       "needs_target": true,
       "mvp": true,
-      "desc": "免费解锁【未知新大陆】渡海权限，并造成 30 战力打击（每局限买1次）"
+      "desc": "免费解锁【未知新大陆】渡海权限，并造成 30 战力打击（每局限买1次）",
+      "art": "res://assets/cheats/ironclad.jpg"
     },
     {
       "id": "cyber_burn",
@@ -264,7 +308,8 @@
       "one_time": false,
       "needs_target": false,
       "mvp": false,
-      "desc": "锁死民心 2 回合，期间一切民心扣减无效，第2回合结束反噬 -35 民心"
+      "desc": "锁死民心 2 回合，期间一切民心扣减无效，第2回合结束反噬 -35 民心",
+      "art": "res://assets/cheats/cyber_burn.jpg"
     },
     {
       "id": "holo_emperor",
@@ -275,7 +320,8 @@
       "one_time": true,
       "needs_target": false,
       "mvp": true,
-      "desc": "糊弄朝堂，始皇耐心 +3 回合（每局限买1次）"
+      "desc": "糊弄朝堂，始皇耐心 +3 回合（每局限买1次）",
+      "art": "res://assets/cheats/holo_emperor.jpg"
     },
     {
       "id": "time_loan",
@@ -286,7 +332,8 @@
       "one_time": false,
       "needs_target": false,
       "mvp": false,
-      "desc": "立刻 +40 民心救场，接下来 3 回合每回合自动 -15 民心"
+      "desc": "立刻 +40 民心救场，接下来 3 回合每回合自动 -15 民心",
+      "art": "res://assets/cheats/time_loan.jpg"
     },
     {
       "id": "nuke_seal",
@@ -297,7 +344,8 @@
       "one_time": false,
       "needs_target": true,
       "mvp": true,
-      "desc": "终极外挂：直接秒杀任意一个板块，触发全屏震动"
+      "desc": "终极外挂：直接秒杀任意一个板块，触发全屏震动",
+      "art": "res://assets/cheats/nuke_seal.jpg"
     }
   ],
   "events": [
@@ -305,29 +353,63 @@
       "id": "rumor",
       "title": "1. 赛博舆情监控",
       "desc": "咸阳街头流传“方士用铁鸟摄魂”的谣言，人心浮动。",
-      "option_a": { "label": "全网控评删帖", "morale_loss": 10 },
-      "option_b": { "label": "公开无人机表演", "type": "action_penalty", "amount": 1, "fallback_morale_loss": 10 }
+      "option_a": {
+        "label": "全网控评删帖",
+        "morale_loss": 10
+      },
+      "option_b": {
+        "label": "公开无人机表演",
+        "type": "action_penalty",
+        "amount": 1,
+        "fallback_morale_loss": 10
+      },
+      "art": "res://assets/events/rumor.jpg"
     },
     {
       "id": "overheat",
       "title": "2. 阿房宫算力过载",
       "desc": "终端算力消耗过大，宫内酷热，工匠抱怨连连。",
-      "option_a": { "label": "强征民夫运冰降温", "morale_loss": 10 },
-      "option_b": { "label": "降频节能运行", "type": "disable_refresh_and_debuff", "power_debuff": 5 }
+      "option_a": {
+        "label": "强征民夫运冰降温",
+        "morale_loss": 10
+      },
+      "option_b": {
+        "label": "降频节能运行",
+        "type": "disable_refresh_and_debuff",
+        "power_debuff": 5
+      },
+      "art": "res://assets/events/overheat.jpg"
     },
     {
       "id": "mohist_hack",
       "title": "3. 墨家黑客入侵",
       "desc": "墨家残部试图破解你的沙盘加密协议，盗取火药配方。",
-      "option_a": { "label": "暴力封锁城门搜捕", "morale_loss": 10 },
-      "option_b": { "label": "放任部分技术外流", "type": "buff_random_region", "hp_add": 15 }
+      "option_a": {
+        "label": "暴力封锁城门搜捕",
+        "morale_loss": 10
+      },
+      "option_b": {
+        "label": "放任部分技术外流",
+        "type": "buff_random_region",
+        "hp_add": 15
+      },
+      "art": "res://assets/events/mohist_hack.jpg"
     },
     {
       "id": "supply_line",
       "title": "4. 远征军粮道告急",
       "desc": "前线战线拉长，传统马车运粮损耗严重，军心不稳。",
-      "option_a": { "label": "加征战时军粮税", "morale_loss": 10 },
-      "option_b": { "label": "紧急空投压缩饼干", "type": "action_penalty", "amount": 1, "fallback_morale_loss": 10 }
+      "option_a": {
+        "label": "加征战时军粮税",
+        "morale_loss": 10
+      },
+      "option_b": {
+        "label": "紧急空投压缩饼干",
+        "type": "action_penalty",
+        "amount": 1,
+        "fallback_morale_loss": 10
+      },
+      "art": "res://assets/events/supply_line.jpg"
     }
   ],
   "hidden_levels": [
@@ -340,7 +422,9 @@
       "requires_advisor": false,
       "morale_gain": 35,
       "patience_delta": -1,
-      "mvp": false
+      "mvp": false,
+      "art": "res://assets/hidden/penglai.jpg",
+      "story": "你在东海迷雾中撞破徐福私建黄金度假宫的骗局，当众开仓散财于民！"
     },
     {
       "id": "dazexiang",
@@ -351,7 +435,9 @@
       "requires_advisor": true,
       "morale_gain": 25,
       "patience_delta": 0,
-      "mvp": true
+      "mvp": true,
+      "art": "res://assets/hidden/dazexiang.jpg",
+      "story": "暴雨夜的大泽乡火把冲天，你派遣在场名臣全息降临安抚黎民，成功化解起义暗流！"
     },
     {
       "id": "antarctica",
@@ -362,7 +448,9 @@
       "requires_advisor": false,
       "morale_gain": 50,
       "patience_delta": 0,
-      "mvp": false
+      "mvp": false,
+      "art": "res://assets/hidden/antarctica.jpg",
+      "story": "你耗费终端算力破译南极冰层反光，寻回穿越时坠落的逃生舱，取出完好的种子库与医疗包！"
     }
   ],
   "endings": {
