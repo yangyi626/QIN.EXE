@@ -248,7 +248,7 @@ def main():
     # 2. Verify data/game_data.json totals
     total_hp = sum(r["hp"] for r in DATA["regions"])
     assert total_hp == 359, f"Total region HP should be 359, got {total_hp}"
-    assert len(DATA["advisors"]) == 9 and len(DATA["cheats"]) == 12 and len(DATA["events"]) == 4
+    assert len(DATA["advisors"]) == 18 and len(DATA["cheats"]) == 12 and len(DATA["events"]) == 4
 
     # 3. Verify data/lines.json max length <= 25 chars
     over = []

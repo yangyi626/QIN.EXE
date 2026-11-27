@@ -200,6 +200,78 @@
       "mvp": false,
       "portrait": "res://assets/portraits/wanganshi.jpg",
       "skill": "终端刷新免费，且所有外挂的民心消耗降低 20%"
+    },
+    {
+      "id": "baqing",
+      "name": "巴清",
+      "cost": 15,
+      "mvp": false,
+      "portrait": "res://assets/portraits/baqing.jpg",
+      "skill": "丹穴财阀：每回合开始自动+6民心，且强征造楼船消耗减半"
+    },
+    {
+      "id": "fuhao",
+      "name": "妇好",
+      "cost": 20,
+      "mvp": false,
+      "portrait": "res://assets/portraits/fuhao.jpg",
+      "skill": "玄鸟统帅：常规进攻额外+15破甲伤害，攻克任意板块恢复6民心"
+    },
+    {
+      "id": "huangdaopo",
+      "name": "黄道婆",
+      "cost": 15,
+      "mvp": false,
+      "portrait": "res://assets/portraits/huangdaopo.jpg",
+      "skill": "巧织万家：所有民生科技额外+10民心，买卡本回合秦军战力+8"
+    },
+    {
+      "id": "mulan",
+      "name": "花木兰",
+      "cost": 15,
+      "mvp": false,
+      "portrait": "res://assets/portraits/mulan.jpg",
+      "skill": "朔气铁骑：每回合可发动2次免费常规进攻，打草原/西域额外+10伤"
+    },
+    {
+      "id": "wuzetian",
+      "name": "武则天",
+      "cost": 25,
+      "mvp": false,
+      "portrait": "res://assets/portraits/wuzetian.jpg",
+      "skill": "日月当空：每回合行动点+1，突发事件选A反加5民心（军事卡额外-5民心）"
+    },
+    {
+      "id": "liqingzhao",
+      "name": "李清照",
+      "cost": 15,
+      "mvp": false,
+      "portrait": "res://assets/portraits/liqingzhao.jpg",
+      "skill": "易安文心：每回合开始+4民心，买义务教育仍可常规进攻且额外+15民心"
+    },
+    {
+      "id": "caiwenji",
+      "name": "蔡文姬",
+      "cost": 15,
+      "mvp": false,
+      "portrait": "res://assets/portraits/caiwenji.jpg",
+      "skill": "胡笳安民：召唤其他名臣消耗减半，回合结束若未用军事卡额外+8民心"
+    },
+    {
+      "id": "fanlihua",
+      "name": "樊梨花",
+      "cost": 20,
+      "mvp": false,
+      "portrait": "res://assets/portraits/fanlihua.jpg",
+      "skill": "奇门破阵：破招打断敌军意图额外造成25点穿甲伤，攻破城池+10民心"
+    },
+    {
+      "id": "banzhao",
+      "name": "班昭",
+      "cost": 15,
+      "mvp": false,
+      "portrait": "res://assets/portraits/banzhao.jpg",
+      "skill": "续史明鉴：强征造楼船消耗减半，每次刷新终端额外回复+5民心"
     }
   ],
   "cheats": [

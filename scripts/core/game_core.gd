@@ -177,6 +177,24 @@ func get_active_synergies() -> Array[Dictionary]:
 		list.append({"id": "bianfa_shuangbi", "name": "变法双璧", "desc": "解除商鞅80民心上限锁，每回合行动点增至3点"})
 	if has_advisor("tanghe"):
 		list.append({"id": "wanjia_denghuo", "name": "万家灯火", "desc": "回合结束民心>=60时，对最弱前线造成10点王道感化伤害"})
+	if has_advisor("baqing") and has_advisor("zhangqian"):
+		list.append({"id": "silu_danshang", "name": "丝路丹商", "desc": "每回合额外+8民心，且终端刷新完全免费"})
+	if has_advisor("fuhao") and (has_advisor("huoqubing") or has_advisor("hanxin")):
+		list.append({"id": "wushuang_zhanshen", "name": "无双战神", "desc": "常规进攻伤害×1.4，破招打断时额外反击20点伤害"})
+	if has_advisor("huangdaopo") and (has_advisor("libing") or has_advisor("tanghe")):
+		list.append({"id": "yishi_shouwang", "name": "衣食守望", "desc": "每回合开始民心>=65时，额外+5民心并补充1次免费刷新"})
+	if has_advisor("mulan") and (has_advisor("huoqubing") or has_advisor("fuhao")):
+		list.append({"id": "juedai_shuangjiao", "name": "绝代双骄", "desc": "每次常规进攻命中额外恢复+4民心"})
+	if has_advisor("wuzetian") and (has_advisor("shangyang") or has_advisor("wanganshi")):
+		list.append({"id": "qiankun_xinzheng", "name": "乾坤新政", "desc": "所有外挂消耗再降20%，且解除民心上限锁"})
+	if has_advisor("liqingzhao") and (has_advisor("zhugeliang") or has_advisor("huangdaopo")):
+		list.append({"id": "jinxiu_wenmai", "name": "锦绣文脉", "desc": "终端刷新免费，触发隐藏关额外奖励+10民心"})
+	if has_advisor("caiwenji") and (has_advisor("caocao") or has_advisor("zhangqian")):
+		list.append({"id": "hujia_guihan", "name": "胡笳归汉", "desc": "终端刷新免费，每次刷新额外回复+6民心"})
+	if has_advisor("fanlihua") and (has_advisor("hanxin") or has_advisor("mulan")):
+		list.append({"id": "jinguo_bingxian", "name": "巾帼兵仙", "desc": "破城立刻返还1次免费常规进攻，韩信突袭额外+15伤"})
+	if has_advisor("banzhao") and (has_advisor("liqingzhao") or has_advisor("caiwenji")):
+		list.append({"id": "qianqiu_lantai", "name": "千秋兰台", "desc": "每回合获赠1张【始皇密匣】0费秘策，施放秘策额外+6民心"})
 	return list
 
 
@@ -205,7 +223,7 @@ func get_region_weakness_info(region_id: String) -> Dictionary:
 
 
 func get_morale_cap() -> int:
-	var base_cap := 80 if (has_advisor("shangyang") and not has_synergy("bianfa_shuangbi")) else 100
+	var base_cap := 80 if (has_advisor("shangyang") and not has_synergy("bianfa_shuangbi") and not has_synergy("qiankun_xinzheng")) else 100
 	return maxi(30, base_cap - pact_morale_cap_penalty)
 
 
@@ -236,9 +254,12 @@ func get_conventional_power() -> int:
 func get_effective_cheat_delta(cheat: Dictionary) -> int:
 	var delta := int(cheat["morale_delta"])
 	if delta >= 0:
-		if cheat["category"] == "livelihood" and has_advisor("libing"):
-			return delta * 2
-		return delta
+		var out := delta * 2 if (cheat["category"] == "livelihood" and has_advisor("libing")) else delta
+		if cheat["category"] == "livelihood" and has_advisor("huangdaopo"):
+			out += 10
+		if cheat["id"] == "education" and has_advisor("liqingzhao"):
+			out += 15
+		return out
 	if pact_free_hand_turn:
 		return 0
 	if turn == 1 and free_hook_available and cheat["id"] == "drone":
@@ -249,26 +270,33 @@ func get_effective_cheat_delta(cheat: Dictionary) -> int:
 		mult *= 0.5
 	if has_advisor("wanganshi"):
 		mult *= 0.8
+	if tactical_mode and has_synergy("qiankun_xinzheng"):
+		mult *= 0.8
 	# v2.1 规定：诸葛亮与王安石同场时 ×0.5 ×0.8 只在最后向上取整一次
 	var final_cost := int(ceil(cost * mult))
 	if cheat["category"] == "military" and has_advisor("caocao"):
 		if not (tactical_mode and not first_mil_used_turn and has_synergy("wolong_jianxiong")):
 			final_cost += 10
+	if cheat["category"] == "military" and has_advisor("wuzetian"):
+		final_cost += 5
 	return -final_cost
 
 
 func get_effective_advisor_cost(adv: Dictionary) -> int:
 	if pact_free_hand_turn or (turn == 1 and free_hook_available):
 		return 0
-	return int(adv["cost"])
+	var cost := int(adv["cost"])
+	if has_advisor("caiwenji") and str(adv.get("id", "")) != "caiwenji":
+		cost = int(ceil(float(cost) * 0.5))
+	return cost
 
 
 func get_fleet_cost() -> int:
-	return 15 if has_advisor("tanghe") else 30
+	return 15 if (has_advisor("tanghe") or has_advisor("baqing") or has_advisor("banzhao")) else 30
 
 
 func get_refresh_cost() -> int:
-	return 0 if has_advisor("wanganshi") else 5
+	return 0 if (has_advisor("wanganshi") or has_synergy("silu_danshang") or has_synergy("jinxiu_wenmai") or has_synergy("hujia_guihan")) else 5
 
 
 func can_attack_region(region_id: String) -> bool:
@@ -360,11 +388,19 @@ func conventional_attack(region_id: String) -> Dictionary:
 			dmg += 12
 			weakness_hit.emit(region_id, "瘟疫退散 +12")
 	attack_left -= 1
+	if has_advisor("fuhao"):
+		dmg += 15
+	if has_advisor("mulan") and (region_id == "steppe" or region_id == "west"):
+		dmg += 10
+	if tactical_mode and has_synergy("wushuang_zhanshen"):
+		dmg = int(floor(float(dmg) * 1.4))
 	if tactical_mode and secret_overclock_active:
 		dmg *= 2
 		secret_overclock_active = false
 		weakness_hit.emit(region_id, "乾坤借势 ×2")
 	var res := _apply_damage(region_id, dmg, false, "常规秦军")
+	if tactical_mode and has_synergy("juedai_shuangjiao"):
+		_modify_morale(4, "绝代双骄", false)
 	_emit_state()
 	return res
 
@@ -399,6 +435,10 @@ func refresh_terminal() -> Dictionary:
 	if cost > 0:
 		_modify_morale(-cost, "刷新终端", false)
 	if game_over_code == "":
+		if has_advisor("banzhao"):
+			_modify_morale(5, "班昭续史明鉴", false)
+		if tactical_mode and has_synergy("hujia_guihan"):
+			_modify_morale(6, "胡笳归汉", false)
 		_roll_terminal(false)
 		_log("终端刷新完成（%s）。" % ("免费" if cost == 0 else "-%d 民心" % cost))
 	_emit_state()
@@ -494,6 +534,8 @@ func buy_cheat(slot_index: int, target_region_id: String = "") -> Dictionary:
 		if cheat["category"] == "livelihood" and has_synergy("silu_shuili"):
 			temp_power_bonus += 10
 			_log("【丝路水利】民生兴邦，本回合常规秦军战力 +10！")
+		if has_advisor("huangdaopo"):
+			temp_power_bonus += 8
 		if cheat["category"] == "military":
 			if not first_mil_used_turn and has_synergy("wolong_jianxiong"):
 				extra_mil += 20
@@ -504,6 +546,8 @@ func buy_cheat(slot_index: int, target_region_id: String = "") -> Dictionary:
 			if secret_overclock_active:
 				cao_mult *= 2
 				secret_overclock_active = false
+	if cheat["category"] == "military":
+		first_mil_used_turn = true
 	var strike_res: Dictionary = {}
 
 	match cheat["id"]:
@@ -516,8 +560,11 @@ func buy_cheat(slot_index: int, target_region_id: String = "") -> Dictionary:
 			cement_road_bonus += 10
 			_log("【水泥直道】贯通，常规秦军永久 +10。")
 		"education":
-			education_turn = true
-			_log("【义务教育】推行，本回合无法常规进攻。")
+			if has_advisor("liqingzhao"):
+				_log("【李清照·易安文心】推行义务教育，本回合仍可常规进攻。")
+			else:
+				education_turn = true
+				_log("【义务教育】推行，本回合无法常规进攻。")
 		"drone":
 			var instant := has_advisor("huoqubing")
 			var w_bonus := 0
@@ -594,6 +641,8 @@ func trigger_hidden(hidden_id: String) -> Dictionary:
 		_:
 			return {"ok": false, "error": "未知隐藏关"}
 
+	if tactical_mode and has_synergy("jinxiu_wenmai"):
+		_modify_morale(10, "锦绣文脉", false)
 	_emit_state()
 	return {"ok": true, "hidden_id": hidden_id}
 
@@ -601,6 +650,9 @@ func trigger_hidden(hidden_id: String) -> Dictionary:
 func end_turn() -> Dictionary:
 	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
 		return {"ok": false, "error": "当前无法结束回合"}
+
+	if has_advisor("caiwenji") and not first_mil_used_turn:
+		_modify_morale(8, "蔡文姬胡笳安民", false)
 
 	if tactical_mode:
 		# 万家灯火羁绊：民心 >= 60 时自动对最弱前线造成 10 点王道感化伤
@@ -648,7 +700,10 @@ func resolve_event(choice: String) -> Dictionary:
 	var loss := 5 if has_advisor("tanghe") else 10
 
 	if choice == "A":
-		_modify_morale(-loss, ev["title"], false)
+		if has_advisor("wuzetian"):
+			_modify_morale(5, ev["title"] + "·女帝借势", false)
+		else:
+			_modify_morale(-loss, ev["title"], false)
 	elif choice == "B":
 		var b: Dictionary = ev["option_b"]
 		match b["type"]:
@@ -705,10 +760,10 @@ func _advance_to_next_turn() -> void:
 		_trigger_ending("lose_time")
 		return
 
-	var base_actions := 3 if (tactical_mode and has_synergy("bianfa_shuangbi")) else 2
+	var base_actions := 2 + (1 if (tactical_mode and has_synergy("bianfa_shuangbi")) else 0) + (1 if has_advisor("wuzetian") else 0)
 	actions_left = maxi(0, base_actions - next_turn_action_penalty)
 	next_turn_action_penalty = 0
-	attack_left = 1
+	attack_left = 2 if has_advisor("mulan") else 1
 	refreshes_left = 0 if overheat_no_refresh else 3
 	penicillin_turn = false
 	education_turn = false
@@ -720,6 +775,17 @@ func _advance_to_next_turn() -> void:
 	secret_overclock_active = false
 
 	# v2.1 固定回合开始结算顺序：1.丝路 -> 2.贷款 -> 3.韩信 -> 4.刷新终端
+	if has_advisor("baqing"):
+		_modify_morale(6, "巴清丹穴矿脉", false)
+	if has_advisor("liqingzhao"):
+		_modify_morale(4, "李清照易安文心", false)
+	if tactical_mode and has_synergy("silu_danshang"):
+		_modify_morale(8, "丝路丹商共鸣", false)
+	if tactical_mode and has_synergy("yishi_shouwang") and morale >= 65:
+		_modify_morale(5, "衣食守望", false)
+		refreshes_left = mini(3, refreshes_left + 1)
+	if tactical_mode and has_synergy("qianqiu_lantai"):
+		_grant_secret_card("千秋兰台")
 	var west := _find_region("west")
 	if not west.is_empty() and west["conquered"]:
 		var silk_gain := 12 if (tactical_mode and has_synergy("silu_shuili")) else 5
@@ -735,7 +801,7 @@ func _advance_to_next_turn() -> void:
 		var targets := _unconquered_regions()
 		if not targets.is_empty():
 			var t: Dictionary = targets[_rng.randi_range(0, targets.size() - 1)]
-			var hx_dmg := 40 if (tactical_mode and has_synergy("bingxian_guanjun")) else 25
+			var hx_dmg := 25 + (15 if (tactical_mode and has_synergy("bingxian_guanjun")) else 0) + (15 if (tactical_mode and has_synergy("jinguo_bingxian")) else 0)
 			_apply_damage(t["id"], hx_dmg, false, "韩信自动打击")
 			if game_over_code != "":
 				return
@@ -828,18 +894,35 @@ func _apply_damage(region_id: String, raw_damage: int, instant_kill: bool, sourc
 		conquered_now = true
 		if has_advisor("zhangqian"):
 			_modify_morale(8, "张骞通商", false)
+		if has_advisor("fuhao"):
+			_modify_morale(6, "妇好凯旋", false)
+		if has_advisor("fanlihua"):
+			_modify_morale(10, "樊梨花凯旋", false)
 	if tactical_mode and dmg > 0 and not active_threat.is_empty() and not bool(active_threat.get("interrupted", false)) and active_threat.get("region_id", "") == region_id:
 		active_threat["interrupted"] = true
 		_modify_morale(5, "破招打断敌军意图", false)
 		_log("⚡ 破招打断【%s】！民心 +5。" % active_threat["title"])
 		interrupt_count += 1
 		threat_interrupted.emit(region_id, "破招成功！民心 +5")
+		if has_synergy("wushuang_zhanshen") and not conquered_now:
+			r["hp"] = maxi(0, int(r["hp"]) - 20)
+			if r["hp"] == 0:
+				r["conquered"] = true
+				conquered_now = true
+			_log("⚔【无双战神】破招追击！对【%s】额外造成 20 点反击重伤！" % r["name"])
+		if has_advisor("fanlihua") and not conquered_now:
+			r["hp"] = maxi(0, int(r["hp"]) - 25)
+			if r["hp"] == 0:
+				r["conquered"] = true
+				conquered_now = true
+				_modify_morale(10, "樊梨花凯旋", false)
+			_log("⚔【樊梨花·奇门破阵】破招穿甲！对【%s】额外造成 25 点伤害！" % r["name"])
 		if interrupt_count >= 2 and not _interrupt_milestone_given:
 			_interrupt_milestone_given = true
 			_grant_secret_card("连破敌招")
-	if tactical_mode and conquered_now and has_synergy("bingxian_guanjun"):
+	if tactical_mode and conquered_now and (has_synergy("bingxian_guanjun") or has_synergy("jinguo_bingxian")):
 		attack_left += 1
-		_log("【兵仙冠军】乘胜追击！额外获得 1 次免费常规进攻！")
+		_log("【%s】乘胜追击！额外获得 1 次免费常规进攻！" % ("巾帼兵仙" if has_synergy("jinguo_bingxian") else "兵仙冠军"))
 	strike_performed.emit(region_id, dmg, source, conquered_now)
 	if conquered_now and get_conquered_count() >= 6:
 		_trigger_ending("win_sage" if morale >= 60 else "win_tyrant")
@@ -1006,7 +1089,7 @@ func _maybe_trigger_debate() -> void:
 
 func _advisor_debate_offer(adv: Dictionary) -> Dictionary:
 	var aid: String = adv["id"]
-	if aid in ["zhugeliang", "libing", "zhangqian", "tanghe"]:
+	if aid in ["zhugeliang", "libing", "zhangqian", "tanghe", "baqing", "huangdaopo", "liqingzhao", "caiwenji", "banzhao"]:
 		return {
 			"quote": "陛下，宜先安万民之心，方能长治久安！",
 			"label": "采纳【%s】：民心 +14，并免费获 1 次刷新" % adv["name"],
@@ -1088,6 +1171,8 @@ func cast_secret_card(index: int) -> Dictionary:
 			secret_overclock_active = true
 			_roll_terminal(false)
 			_log("★ 释放【乾坤借势】：下次攻击伤害 ×2，终端手牌免费重抽！")
+	if has_synergy("qianqiu_lantai"):
+		_modify_morale(6, "千秋兰台", false)
 	_emit_state()
 	return {"ok": true, "secret_id": card["id"]}
 

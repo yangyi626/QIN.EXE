@@ -331,13 +331,13 @@ func _toggle_mute() -> void:
 			_uprising_player.play()
 
 
-func _plaque_style(pad_x: int = 18, pad_y: int = 14) -> StyleBoxTexture:
+func _plaque_style(pad_x: int = 60, pad_y: int = 46) -> StyleBoxTexture:
 	var st := StyleBoxTexture.new()
 	st.texture = _tex_panel
-	st.texture_margin_left = 48
-	st.texture_margin_right = 48
-	st.texture_margin_top = 36
-	st.texture_margin_bottom = 36
+	st.texture_margin_left = 86
+	st.texture_margin_right = 86
+	st.texture_margin_top = 64
+	st.texture_margin_bottom = 64
 	st.content_margin_left = pad_x
 	st.content_margin_right = pad_x
 	st.content_margin_top = pad_y
@@ -470,7 +470,7 @@ func _build_stage_and_ui() -> void:
 	# 6. 地图就地实景建筑战区勘察牌（青铜雕花贴图 + 16:9 实景建筑大图）
 	_popover = PanelContainer.new()
 	_popover.visible = false
-	_popover.add_theme_stylebox_override("panel", _plaque_style(18, 16))
+	_popover.add_theme_stylebox_override("panel", _plaque_style(36, 30))
 	add_child(_popover)
 	var pv := VBoxContainer.new()
 	pv.add_theme_constant_override("separation", 6)
@@ -517,7 +517,7 @@ func _build_stage_and_ui() -> void:
 
 	_secret_box = HBoxContainer.new()
 	_secret_box.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
-	_secret_box.offset_left = -260; _secret_box.offset_top = -256; _secret_box.offset_right = 212; _secret_box.offset_bottom = -214
+	_secret_box.offset_left = -260; _secret_box.offset_top = -272; _secret_box.offset_right = 212; _secret_box.offset_bottom = -230
 	_secret_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	_secret_box.add_theme_constant_override("separation", 10)
 	add_child(_secret_box)
@@ -549,6 +549,8 @@ func _build_stage_and_ui() -> void:
 	top_plaque.add_child(th)
 	_label(th, "大秦 · 2076", 16, GOLD)
 	_lbl_act = _label(th, "", 13, Color.WHITE)
+	_lbl_act.mouse_filter = Control.MOUSE_FILTER_STOP
+	_lbl_act.tooltip_text = "按已统一大洲数推进幕次：0~1洲第1幕 · 2~3洲第2幕 · 4~5洲第3幕"
 	var mbox := VBoxContainer.new()
 	mbox.add_theme_constant_override("separation", 2)
 	th.add_child(mbox)
@@ -624,7 +626,7 @@ func _build_stage_and_ui() -> void:
 	_modal_shade.hide()
 	_modal_layer.add_child(_modal_shade)
 
-	_event_panel = _make_modal(Vector2(590, 480))
+	_event_panel = _make_modal(Vector2(650, 520))
 	var ev_box := VBoxContainer.new()
 	ev_box.add_theme_constant_override("separation", 9)
 	_event_panel.add_child(ev_box)
@@ -641,7 +643,7 @@ func _build_stage_and_ui() -> void:
 	_event_btn_a = _button(ev_box, "", func(): _play_sfx("click"); _event_panel.hide(); core.resolve_event("A"), GOLD)
 	_event_btn_b = _button(ev_box, "", func(): _play_sfx("click"); _event_panel.hide(); core.resolve_event("B"), CYAN)
 
-	_ending_panel = _make_modal(Vector2(620, 560))
+	_ending_panel = _make_modal(Vector2(680, 595))
 	var end_box := VBoxContainer.new()
 	end_box.add_theme_constant_override("separation", 9)
 	_ending_panel.add_child(end_box)
@@ -670,7 +672,7 @@ func _build_stage_and_ui() -> void:
 	var btn_home := _button(end_btns, "返回主屏", func(): _play_sfx("click"); _show_title_curtain(), CYAN)
 	btn_home.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	_hidden_panel = _make_modal(Vector2(590, 460))
+	_hidden_panel = _make_modal(Vector2(650, 505))
 	var h_box := VBoxContainer.new()
 	h_box.add_theme_constant_override("separation", 9)
 	_hidden_panel.add_child(h_box)
@@ -687,7 +689,7 @@ func _build_stage_and_ui() -> void:
 	_hidden_reward = _label(h_box, "", 15, SAGE)
 	_button(h_box, "收入囊中，继续推演", func(): _play_sfx("click"); _hidden_panel.hide(); _sync_modal_shade(), GOLD)
 
-	_replace_panel = _make_modal(Vector2(520, 290))
+	_replace_panel = _make_modal(Vector2(590, 340))
 	var rep_box := VBoxContainer.new()
 	rep_box.add_theme_constant_override("separation", 10)
 	_replace_panel.add_child(rep_box)
@@ -698,7 +700,7 @@ func _build_stage_and_ui() -> void:
 	_replace_btn_1 = _button(rep_box, "", _confirm_replace.bind(1), GOLD)
 	_button(rep_box, "取消召唤", _cancel_replace, MUTED)
 
-	_debate_panel = _make_modal(Vector2(630, 405))
+	_debate_panel = _make_modal(Vector2(690, 455))
 	var db_box := VBoxContainer.new()
 	db_box.add_theme_constant_override("separation", 10)
 	_debate_panel.add_child(db_box)
@@ -735,7 +737,7 @@ func _build_stage_and_ui() -> void:
 	_debate_btn_a = _button(db_box, "", func(): _play_sfx("click"); _debate_panel.hide(); core.resolve_debate("A"), GOLD)
 	_debate_btn_b = _button(db_box, "", func(): _play_sfx("click"); _debate_panel.hide(); core.resolve_debate("B"), CYAN)
 
-	_pact_panel = _make_modal(Vector2(590, 355))
+	_pact_panel = _make_modal(Vector2(650, 400))
 	var p_box := VBoxContainer.new()
 	p_box.add_theme_constant_override("separation", 10)
 	_pact_panel.add_child(p_box)
@@ -748,7 +750,7 @@ func _build_stage_and_ui() -> void:
 	_pact_btn_b = _button(p_box, "B. 盗取天时：本局民心上限永久 -25 → 始皇耐心 +4 回合，并获赠 1 张 0 费金色国师秘技", func(): _play_sfx("event"); _pact_panel.hide(); _sync_modal_shade(); _result(core.make_emperor_pact("steal_time")), GOLD)
 	_button(p_box, "合上密匣，暂不交易 (Esc)", func(): _play_sfx("click"); _pact_panel.hide(); _sync_modal_shade(), MUTED)
 
-	_rules_panel = _make_modal(Vector2(580, 350))
+	_rules_panel = _make_modal(Vector2(650, 400))
 	var r_box := VBoxContainer.new()
 	r_box.add_theme_constant_override("separation", 9)
 	_rules_panel.add_child(r_box)
@@ -764,18 +766,22 @@ func _build_stage_and_ui() -> void:
 	r_txt.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_button(r_box, "明白了，继续推演", _toggle_rules, GOLD)
 
-	_log_panel = _make_modal(Vector2(580, 420))
+	_log_panel = _make_modal(Vector2(650, 450))
 	var l_box := VBoxContainer.new()
 	l_box.add_theme_constant_override("separation", 8)
 	_log_panel.add_child(l_box)
 	_label(l_box, "咸阳机要战录  /  最近 14 条结算记录", 12, CYAN)
-	_log_text = _label(l_box, "", 12, Color("#ddeaea"))
+	var l_scroll := ScrollContainer.new()
+	l_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	l_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	l_box.add_child(l_scroll)
+	_log_text = _label(l_scroll, "", 13, Color("#ddeaea"), false)
+	_log_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_log_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_log_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_button(l_box, "关闭战录 (L)", _toggle_logs, GOLD)
 
 	_codex_panel = _make_modal(Vector2(960, 588))
-	_codex_panel.add_theme_stylebox_override("panel", _plaque_style(48, 36))
+	_codex_panel.add_theme_stylebox_override("panel", _plaque_style(64, 48))
 	var c_box := VBoxContainer.new()
 	c_box.add_theme_constant_override("separation", 10)
 	_codex_panel.add_child(c_box)
@@ -783,7 +789,7 @@ func _build_stage_and_ui() -> void:
 	c_hdr.add_theme_constant_override("separation", 10)
 	c_box.add_child(c_hdr)
 	_label(c_hdr, "咸阳藏经阁", 22, GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_codex_tab_adv = _button(c_hdr, "👑 历史名臣 (9)", func(): _play_sfx("click"); _codex_mode = "advisors"; _populate_codex(), GOLD)
+	_codex_tab_adv = _button(c_hdr, "👑 历史名臣 (18)", func(): _play_sfx("click"); _codex_mode = "advisors"; _populate_codex(), GOLD)
 	_codex_tab_cheat = _button(c_hdr, "⚡ 外挂 (12)", func(): _play_sfx("click"); _codex_mode = "cheats"; _populate_codex(), CYAN)
 	_codex_tab_lands = _button(c_hdr, "🏛 九州舆图 (7)", func(): _play_sfx("click"); _codex_mode = "landmarks"; _populate_codex(), GOLD)
 	_button(c_hdr, "关闭 (C)", _toggle_codex, MUTED)
@@ -808,8 +814,8 @@ func _build_stage_and_ui() -> void:
 	_title_curtain.add_child(shade)
 	var tbox := PanelContainer.new()
 	tbox.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	tbox.offset_left = -280; tbox.offset_top = -175; tbox.offset_right = 280; tbox.offset_bottom = 175
-	tbox.add_theme_stylebox_override("panel", _plaque_style(36, 30))
+	tbox.offset_left = -315; tbox.offset_top = -195; tbox.offset_right = 315; tbox.offset_bottom = 195
+	tbox.add_theme_stylebox_override("panel", _plaque_style(64, 48))
 	_title_curtain.add_child(tbox)
 	var tv := VBoxContainer.new()
 	tv.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1100,7 +1106,7 @@ func _make_modal(sz: Vector2) -> PanelContainer:
 	p.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	p.offset_left = -sz.x * 0.5; p.offset_top = -sz.y * 0.5
 	p.offset_right = sz.x * 0.5; p.offset_bottom = sz.y * 0.5
-	p.add_theme_stylebox_override("panel", _plaque_style(34, 28))
+	p.add_theme_stylebox_override("panel", _plaque_style(64, 48))
 	p.visible = false
 	_modal_layer.add_child(p)
 	return p
@@ -1764,12 +1770,12 @@ func _layout_hand_cards() -> void:
 	if _card_nodes.is_empty():
 		return
 	var vp := get_viewport_rect().size
-	var card_sz := Vector2(182.0, 212.0)
+	var card_sz := Vector2(186.0, 226.0)
 	var gap := 16.0
 	var count := _card_nodes.size()
 	var total_w := float(count) * card_sz.x + float(count - 1) * gap
 	var start_x := (vp.x - total_w) * 0.5 - 24.0
-	var base_y := vp.y - card_sz.y + 14.0
+	var base_y := vp.y - card_sz.y + 6.0
 	_card_base_pos.clear()
 	for i in range(count):
 		var arch_y := absf(float(i) - 1.0) * 8.0
@@ -1799,7 +1805,7 @@ func _create_tactile_card(slot: int) -> Control:
 	var active: bool = (slot == _pending_cheat_slot)
 
 	var root := Control.new()
-	root.custom_minimum_size = Vector2(182, 212)
+	root.custom_minimum_size = Vector2(186, 226)
 
 	var frame := TextureRect.new()
 	frame.texture = _tex_card
