@@ -898,6 +898,7 @@ func _populate_codex() -> void:
 	_codex_tab_cheat.modulate = CYAN if _codex_mode == "cheats" else MUTED
 	_codex_tab_lands.modulate = GOLD if _codex_mode == "landmarks" else MUTED
 	if _codex_mode == "advisors":
+		var idx := 1
 		for adv in _game_data.get("advisors", []):
 			var quote := ""
 			var lines_for_adv: Variant = _lines_data.get("advisors", {}).get(adv["id"], {})
@@ -908,55 +909,175 @@ func _populate_codex() -> void:
 						quote = "「%s」" % str(arr[0])
 						break
 			_codex_grid.add_child(_make_codex_card(
-				adv["name"], "名臣 · 耗%d民心" % int(adv["cost"]), GOLD,
-				adv.get("portrait", ""), adv["skill"], quote
+				adv["name"], "-%d" % int(adv["cost"]), "常驻",
+				adv["skill"], quote, "- 玄黑名臣 -", "NO.%02d" % idx,
+				GOLD, Color("#3a2c16"), adv.get("portrait", "")
 			))
+			idx += 1
 	elif _codex_mode == "landmarks":
-		_codex_grid.add_child(_make_codex_card("大秦 · 咸阳宫", "龙兴本营 · 常规战力 %d" % int(_latest.get("conventional_power", 20)), GOLD, "res://assets/landmarks/xianyang.jpg", "咸阳宫与万里长城：玄黑帝国核心，点击沙盘本营可随时巡视国力。"))
+		_codex_grid.add_child(_make_codex_card(
+			"大秦 · 咸阳宫", "秦", "本营",
+			"咸阳宫与万里长城：玄黑帝国龙兴之地，当前常规秦军战力 %d。" % int(_latest.get("conventional_power", 20)),
+			"点击沙盘本营可随时巡视国力", "- 帝国核心 -", "MAP.00",
+			GOLD, Color("#3a2c16"), "res://assets/landmarks/xianyang.jpg"
+		))
+		var midx := 1
 		for r in _latest.get("regions", _game_data.get("regions", [])):
 			var conq: bool = bool(r.get("conquered", false))
-			var tag := "◆ 已归玄黑" if conq else ("守军 %d · 效率 %d%%" % [int(r.get("hp", 0)), int(round(float(r.get("efficiency", 1.0)) * 100.0))])
-			_codex_grid.add_child(_make_codex_card(r["name"], tag, GOLD if conq else CYAN, r.get("landmark", ""), str(r.get("landmark_name", r["coverage"])) + " — " + r["reward"]))
-	else:
-		for ch_d in _game_data.get("cheats", []):
-			var kind: String = {"military":"军事", "livelihood":"民生", "blacktech":"奇术"}[ch_d["category"]]
-			var tint: Color = {"军事":CYAN, "民生":SAGE, "奇术":VIOLET}[kind]
-			var dm: int = int(ch_d["morale_delta"])
-			var tag := "%s · %s%s" % [kind, "%+d民心" % dm if dm != 0 else "免民心", " · 限1次" if bool(ch_d.get("one_time", false)) else ""]
+			var kw := "已平定" if conq else ("守军%d" % int(r.get("hp", 0)))
+			var badge := "秦" if conq else "%d" % int(r.get("hp", 0))
+			var wk := core.get_region_weakness_info(r["id"])
 			_codex_grid.add_child(_make_codex_card(
-				ch_d["name"], tag, tint, ch_d.get("art", ""), ch_d["desc"]
+				r["name"], badge, kw,
+				"%s。%s" % [str(r.get("landmark_name", r["coverage"])), r["reward"]],
+				"🎯 " + str(wk["label"]), "- 九州舆图 -", "MAP.%02d" % midx,
+				GOLD if conq else CYAN, Color("#352718") if conq else Color("#122d36"), r.get("landmark", "")
 			))
+			midx += 1
+	else:
+		var cidx := 1
+		for ch_d in _game_data.get("cheats", []):
+			var cat: String = ch_d["category"]
+			var footer: String = {"military":"- 现代军事 -", "livelihood":"- 民生科技 -", "blacktech":"- 奇术黑科 -"}[cat]
+			var footer_bg: Color = {"military":Color("#11313a"), "livelihood":Color("#1a3423"), "blacktech":Color("#2c1b3e")}[cat]
+			var tint: Color = {"military":CYAN, "livelihood":SAGE, "blacktech":VIOLET}[cat]
+			var kw := "限1次" if bool(ch_d.get("one_time", false)) else ("打击" if bool(ch_d.get("needs_target", false)) else "生效")
+			var dm: int = int(ch_d["morale_delta"])
+			var badge := ("%+d" % dm) if dm != 0 else "0"
+			_codex_grid.add_child(_make_codex_card(
+				ch_d["name"], badge, kw,
+				ch_d["desc"], "", footer, "EXT.%02d" % cidx,
+				tint, footer_bg, ch_d.get("art", "")
+			))
+			cidx += 1
 
 
-func _make_codex_card(title: String, meta: String, tint: Color, art_path: String, desc: String, quote: String = "") -> Control:
+func _make_codex_card(title: String, badge_txt: String, keyword: String, desc: String, quote: String, footer_title: String, code_no: String, tint: Color, footer_bg: Color, art_path: String) -> Control:
+	# 仿《王者万象棋》竖版收藏卡排版：上方满幅高清插画+左上角徽章+底居中角色名 / 中部深哑光居中技能框 / 底部阵营彩条
 	var card := PanelContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.add_theme_stylebox_override("panel", _flat_style(Color("#171c20"), Color("#514837"), 14, 4))
+	card.custom_minimum_size = Vector2(264, 376)
+	var outer_style := StyleBoxFlat.new()
+	outer_style.bg_color = Color("#13171a")
+	outer_style.border_color = Color(tint, 0.55)
+	outer_style.set_border_width_all(2)
+	outer_style.set_corner_radius_all(8)
+	outer_style.shadow_color = Color(0, 0, 0, 0.5)
+	outer_style.shadow_size = 6
+	card.add_theme_stylebox_override("panel", outer_style)
+
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 8)
+	vb.add_theme_constant_override("separation", 0)
 	card.add_child(vb)
-	var top := HBoxContainer.new()
-	top.add_theme_constant_override("separation", 8)
-	vb.add_child(top)
+
+	# 1. 上半部满幅插画区（216px 高）
+	var art_box := Control.new()
+	art_box.custom_minimum_size = Vector2(0, 216)
+	art_box.clip_contents = true
+	vb.add_child(art_box)
+
 	if art_path != "" and ResourceLoader.exists(art_path):
 		var pic := TextureRect.new()
 		pic.texture = load(art_path)
 		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		pic.custom_minimum_size = Vector2(68, 68)
-		top.add_child(pic)
-	var tv := VBoxContainer.new()
-	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tv.alignment = BoxContainer.ALIGNMENT_CENTER
-	top.add_child(tv)
-	var name_label := _label(tv, title, 18, Color.WHITE, false)
-	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_label(tv, meta, 12, tint, false)
-	var dl := _label(vb, desc, 14, Color("#e1e6e4"), false)
-	dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		pic.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		art_box.add_child(pic)
+
+	# 插画底部柔和暗化渐晕，衬托居中角色名
+	var grad := Gradient.new()
+	grad.colors = PackedColorArray([Color(0.075, 0.09, 0.102, 0.0), Color(0.075, 0.09, 0.102, 0.96)])
+	var gtex := GradientTexture2D.new()
+	gtex.gradient = grad
+	gtex.fill_from = Vector2(0.5, 0.0)
+	gtex.fill_to = Vector2(0.5, 1.0)
+	var fade := TextureRect.new()
+	fade.texture = gtex
+	fade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	fade.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	fade.offset_top = -62
+	art_box.add_child(fade)
+
+	# 左上角圆形费用/印记徽章
+	var b_wrap := PanelContainer.new()
+	b_wrap.position = Vector2(10, 10)
+	b_wrap.custom_minimum_size = Vector2(40, 40)
+	var b_st := StyleBoxFlat.new()
+	b_st.bg_color = Color(0.06, 0.08, 0.10, 0.84)
+	b_st.border_color = Color(tint, 0.85)
+	b_st.set_border_width_all(2)
+	b_st.set_corner_radius_all(20)
+	b_wrap.add_theme_stylebox_override("panel", b_st)
+	art_box.add_child(b_wrap)
+	var b_lbl := _label(b_wrap, badge_txt, 13, tint, false)
+	b_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+
+	# 插画底部正中央大号角色/卡牌名称
+	var name_lbl := _label(art_box, title, 21, Color.WHITE, true)
+	name_lbl.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	name_lbl.offset_top = -34
+	name_lbl.offset_bottom = -6
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_lbl.add_theme_constant_override("outline_size", 4)
+	name_lbl.add_theme_color_override("font_outline_color", Color(0.04, 0.05, 0.06, 0.95))
+
+	# 2. 中部深色哑光居中技能介绍区
+	var mid := PanelContainer.new()
+	mid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var mid_st := StyleBoxFlat.new()
+	mid_st.bg_color = Color("#13171a")
+	mid_st.content_margin_left = 14
+	mid_st.content_margin_right = 14
+	mid_st.content_margin_top = 10
+	mid_st.content_margin_bottom = 8
+	mid.add_theme_stylebox_override("panel", mid_st)
+	vb.add_child(mid)
+
+	var mv := VBoxContainer.new()
+	mv.alignment = BoxContainer.ALIGNMENT_CENTER
+	mv.add_theme_constant_override("separation", 5)
+	mid.add_child(mv)
+
+	var rtl := RichTextLabel.new()
+	rtl.bbcode_enabled = true
+	rtl.fit_content = true
+	rtl.scroll_active = false
+	rtl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rtl.add_theme_font_size_override("normal_font_size", 13)
+	rtl.add_theme_font_size_override("bold_font_size", 13)
+	var hex := tint.to_html(false)
+	rtl.text = "[center][b][color=#%s]✦ %s：[/color][/b][color=#e6eceb]%s[/color][/center]" % [hex, keyword, desc]
+	mv.add_child(rtl)
+
 	if not quote.is_empty():
-		var excerpt := _label(vb, quote, 12, MUTED, false)
-		excerpt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		var q_lbl := _label(mv, quote, 11, MUTED, false)
+		q_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		q_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+	# 3. 底部阵营/分类彩色横幅条（左编号 · 中阵营名 · 右水印）
+	var foot := PanelContainer.new()
+	foot.custom_minimum_size = Vector2(0, 30)
+	var f_st := StyleBoxFlat.new()
+	f_st.bg_color = footer_bg
+	f_st.corner_radius_bottom_left = 6
+	f_st.corner_radius_bottom_right = 6
+	f_st.content_margin_left = 10
+	f_st.content_margin_right = 10
+	foot.add_theme_stylebox_override("panel", f_st)
+	vb.add_child(foot)
+
+	var fh := HBoxContainer.new()
+	foot.add_child(fh)
+	var fl := _label(fh, code_no, 10, Color(1, 1, 1, 0.55), false)
+	fl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var fc := _label(fh, footer_title, 13, tint, false)
+	fc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	fc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fc.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var fr := _label(fh, "QIN 2076", 10, Color(1, 1, 1, 0.45), false)
+	fr.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+
 	return card
 
 
