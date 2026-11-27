@@ -1,11 +1,12 @@
 extends Control
-## 《大秦：2076》2.5D 咸阳宫暗黑立体桌面与拟物手牌表现层（v3.0 · 终极完整参赛版）
+## 《大秦：2076》2.5D 咸阳宫暗黑立体桌面与拟物手牌表现层（v3.1 · 深度卡牌博弈与NPC朝堂介入版）
 ## 严格遵循逻辑与表现分离：仅调用 GameCore 公开方法并订阅信号，不反向篡改核心状态。
 
 var core := GameCore.new()
 var _game_data: Dictionary = {}
 var _lines_data: Dictionary = {}
 var _mvp_only: bool = false
+var _tactical_mode: bool = true
 
 # 调色板（玄黑 / 暗青铜 / 火把鎏金 / 赛博青 / 警报猩红）
 const GOLD := Color("#f2c272")
@@ -167,6 +168,15 @@ var _replace_panel: PanelContainer
 var _replace_title: Label
 var _replace_btn_0: Button
 var _replace_btn_1: Button
+var _debate_panel: PanelContainer
+var _debate_pic_a: TextureRect
+var _debate_pic_b: TextureRect
+var _debate_name_a: Label
+var _debate_name_b: Label
+var _debate_quote_a: Label
+var _debate_quote_b: Label
+var _debate_btn_a: Button
+var _debate_btn_b: Button
 
 
 func _ready() -> void:
@@ -199,6 +209,11 @@ func _ready() -> void:
 	core.advisor_spoke.connect(_on_advisor_spoke)
 	core.hidden_triggered.connect(_on_hidden_triggered)
 	core.game_ended.connect(_on_game_ended)
+	core.threat_interrupted.connect(_on_threat_interrupted)
+	core.synergy_activated.connect(_on_synergy_activated)
+	core.decree_completed.connect(_on_decree_completed)
+	core.debate_triggered.connect(_on_debate_triggered)
+	core.weakness_hit.connect(_on_weakness_hit)
 
 	get_viewport().size_changed.connect(_layout_dynamic_elements)
 	_restart(false)
@@ -667,6 +682,43 @@ func _build_stage_and_ui() -> void:
 	_replace_btn_1 = _button(rep_box, "", _confirm_replace.bind(1), GOLD)
 	_button(rep_box, "取消召唤", _cancel_replace, MUTED)
 
+	_debate_panel = _make_modal(Vector2(630, 405))
+	var db_box := VBoxContainer.new()
+	db_box.add_theme_constant_override("separation", 10)
+	_debate_panel.add_child(db_box)
+	_label(db_box, "⚡ 朝堂争辩  /  在场名臣当庭争执，请陛下定夺", 12, CYAN)
+	var db_cols := HBoxContainer.new()
+	db_cols.add_theme_constant_override("separation", 16)
+	db_cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	db_box.add_child(db_cols)
+	for side_idx in range(2):
+		var col_p := PanelContainer.new()
+		col_p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col_p.add_theme_stylebox_override("panel", _flat_style(Color(0.04, 0.055, 0.07, 0.9), GOLD if side_idx == 0 else CYAN, 10, 6))
+		db_cols.add_child(col_p)
+		var cv := VBoxContainer.new()
+		cv.alignment = BoxContainer.ALIGNMENT_CENTER
+		cv.add_theme_constant_override("separation", 6)
+		col_p.add_child(cv)
+		var pic := TextureRect.new()
+		pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pic.custom_minimum_size = Vector2(86, 86)
+		pic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		cv.add_child(pic)
+		var nm := _label(cv, "", 16, GOLD if side_idx == 0 else CYAN)
+		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var qt := _label(cv, "", 12, Color("#ddeaea"))
+		qt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		qt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		qt.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		if side_idx == 0:
+			_debate_pic_a = pic; _debate_name_a = nm; _debate_quote_a = qt
+		else:
+			_debate_pic_b = pic; _debate_name_b = nm; _debate_quote_b = qt
+	_debate_btn_a = _button(db_box, "", func(): _play_sfx("click"); _debate_panel.hide(); core.resolve_debate("A"), GOLD)
+	_debate_btn_b = _button(db_box, "", func(): _play_sfx("click"); _debate_panel.hide(); core.resolve_debate("B"), CYAN)
+
 	_rules_panel = _make_modal(Vector2(580, 350))
 	var r_box := VBoxContainer.new()
 	r_box.add_theme_constant_override("separation", 9)
@@ -779,6 +831,7 @@ func _show_title_curtain() -> void:
 	_log_panel.hide()
 	_codex_panel.hide()
 	_hidden_panel.hide()
+	_debate_panel.hide()
 	_sync_modal_shade()
 	_title_curtain.modulate.a = 0.0
 	_title_curtain.visible = true
@@ -1089,6 +1142,15 @@ func _draw_stage_fx() -> void:
 			_stage_fx.draw_circle(p, rad + 4.0, Color(col, 0.16 if is_hov else 0.08))
 			_stage_fx.draw_arc(p, rad, 0.0, TAU, 24, Color(col, 0.85), 2.0 if is_hov else 1.4, true)
 			_draw_mini_landmark(p, rid, col)
+			var thr: Dictionary = _latest.get("active_threat", {})
+			if not thr.is_empty() and not bool(thr.get("interrupted", false)) and thr.get("region_id", "") == rid:
+				var tpulse := 18.0 + 4.5 * sin(_anim_time * 7.5)
+				_stage_fx.draw_arc(p, tpulse, 0.0, TAU, 28, CRIMSON, 2.4, true)
+				var ttxt := "⚠ %s · 攻打破招!" % str(thr.get("title", "敌军异动"))
+				var tsz := font.get_string_size(ttxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
+				var tpos2 := p + Vector2(-tsz.x * 0.5, rad + 22.0)
+				_stage_fx.draw_string(font, tpos2 + Vector2(1, 1), ttxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0, 0, 0, 0.95))
+				_stage_fx.draw_string(font, tpos2, ttxt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, CRIMSON)
 
 			# 受损板块自动显示极简迷你血条（一眼掌握战局）
 			var hp: int = int(r["hp"])
@@ -1325,11 +1387,12 @@ func _restart(show_banner: bool = true) -> void:
 	_log_panel.hide()
 	_codex_panel.hide()
 	_hidden_panel.hide()
+	_debate_panel.hide()
 	_modal_shade.hide()
 	for i in range(2):
 		_bubbles[i].hide()
 		_bubble_timers[i] = 0.0
-	core.init_game(_game_data, _lines_data, _mvp_only)
+	core.init_game(_game_data, _lines_data, _mvp_only, -1, _tactical_mode)
 	if show_banner and not _title_curtain.visible:
 		_show_act_banner(1)
 
@@ -1350,6 +1413,8 @@ func _sync_modal_shade() -> void:
 		or _log_panel.visible
 		or _codex_panel.visible
 		or _hidden_panel.visible
+		or _debate_panel.visible
+		or (not _latest.is_empty() and not _latest.get("pending_debate", {}).is_empty())
 		or (not _latest.is_empty() and (not _latest.pending_event.is_empty() or _latest.game_over_code != ""))
 	)
 
@@ -1395,7 +1460,7 @@ func _on_state_changed(snap: Dictionary) -> void:
 	_lbl_conquest.text = "统一 %d/6" % int(snap["conquered_count"])
 	_lbl_patience.text = "%s始皇耐心 %d" % ["⚠ " if _prev_patience <= 3 else "", _prev_patience]
 	_lbl_patience.modulate = CRIMSON if _prev_patience <= 3 else MUTED
-	_crt_status.text = "TERMINAL_2076\n行动 %s\n常规进攻 %d/1" % ["●".repeat(snap["actions_left"]) + "○".repeat(2 - snap["actions_left"]), int(snap["attack_left"])]
+	_crt_status.text = "TERMINAL_2076\n剩余行动点 %d\n剩余常规进攻 %d 次" % [int(snap["actions_left"]), int(snap["attack_left"])]
 	_vignette_mat.set_shader_parameter("danger_intensity", 1.0 if low else 0.0)
 
 	# 声音作为玩法信息源：第三幕切换紧张战鼓；民心 < 40 时起义喧哗随 (40 - 民心) 线性放大
@@ -1469,10 +1534,22 @@ func _refresh_buff_pills(snap: Dictionary) -> void:
 		items.append(["💊 南亚效率 1.0", SAGE])
 	if bool(snap["education_turn"]):
 		items.append(["📚 义务教育·本回禁攻", GOLD])
+	var dec: Dictionary = snap.get("active_decree", {})
+	if not dec.is_empty():
+		if bool(dec.get("done", false)):
+			items.append(["✔ %s已成" % dec["title"], SAGE, dec["reward"]])
+		else:
+			items.append(["📜 %s：%s" % [dec["title"], dec["goal"]], GOLD, "赏赐：" + dec["reward"]])
+	for syn in snap.get("active_synergies", []):
+		items.append(["✦ 羁绊·%s" % syn["name"], GOLD, syn["desc"]])
+	if int(snap.get("debate_next_mil_bonus", 0)) > 0:
+		items.append(["⚔ 铁血之议 +%d伤" % int(snap["debate_next_mil_bonus"]), CRIMSON, "本回合下张军事外挂附加伤害"])
 	for it in items:
 		var pill := PanelContainer.new()
-		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pill.add_theme_stylebox_override("panel", _flat_style(Color(0.04, 0.055, 0.07, 0.84), Color(it[1], 0.75), 5, 5))
+		pill.mouse_filter = Control.MOUSE_FILTER_STOP if it.size() >= 3 else Control.MOUSE_FILTER_IGNORE
+		if it.size() >= 3:
+			pill.tooltip_text = str(it[2])
+		pill.add_theme_stylebox_override("panel", _flat_style(Color(0.04, 0.055, 0.07, 0.86), Color(it[1], 0.8), 5, 5))
 		_buffs_box.add_child(pill)
 		var lbl := _label(pill, it[0], 11, it[1])
 		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1803,7 +1880,12 @@ func _refresh_popover() -> void:
 			var dmg := floori(eff * _latest.conventional_power)
 			_pop_badge.text = "⚔ 敌境实景侦查 · 常规效率 %d%%" % int(round(eff * 100.0))
 			_pop_badge.modulate = CYAN
-			_pop_sub.text = "%s（%s）" % [lm_name, r["coverage"]]
+			var wk := core.get_region_weakness_info(r["id"])
+			var thr2: Dictionary = _latest.get("active_threat", {})
+			var thr_note := ""
+			if not thr2.is_empty() and not bool(thr2.get("interrupted", false)) and thr2.get("region_id", "") == r["id"]:
+				thr_note = "\n⚠ 敌军意图【%s】：%s（攻击即破招+5民心）" % [thr2["title"], thr2["desc"]]
+			_pop_sub.text = "%s\n🎯 %s%s" % [lm_name, wk["label"], thr_note]
 			_pop_attack.show()
 			_pop_attack.text = "⚔ 常规进攻 (−%d 战力)" % dmg
 			_pop_attack.disabled = not ready or _latest.attack_left <= 0 or _latest.education_turn
@@ -1812,7 +1894,7 @@ func _refresh_popover() -> void:
 			elif _latest.education_turn:
 				_pop_desc.text = "本回合已推行义务教育，无法常规进攻。"
 			elif _latest.attack_left <= 0:
-				_pop_desc.text = "本回合常规进攻已用完，可用下方军事手牌。"
+				_pop_desc.text = "本回合常规进攻已用完，下一回合恢复。"
 			else:
 				_pop_desc.text = "%s（再次点击据点也可直接出兵）" % r["reward"]
 
@@ -1959,4 +2041,56 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 		achs.append("👑 不朽双壁")
 	_ending_ach.text = "本局解锁勋章：" + ("  ".join(achs) if not achs.is_empty() else "尚无勋章（下次试试触发隐藏关或带名臣通关！）")
 	_ending_panel.show()
+	_sync_modal_shade()
+
+
+func _on_threat_interrupted(region_id: String, reward_text: String) -> void:
+	_play_sfx("chime")
+	_screen_flash(GOLD, 0.24, 0.3)
+	if UV_REGIONS.has(region_id):
+		_spawn_float_text(_uv_to_stage(UV_REGIONS[region_id]) + Vector2(0, -32), "⚡ 破招打断! +5民心", GOLD)
+	_lbl_ticker.text = "⚡ %s" % reward_text
+
+
+func _on_synergy_activated(synergy_name: String, desc: String) -> void:
+	_play_sfx("chime")
+	_screen_flash(GOLD, 0.28, 0.35)
+	_act_banner_title.text = "✦ 激活名臣羁绊 · %s" % synergy_name
+	_act_banner_sub.text = desc
+	_act_banner.visible = true
+	_act_banner.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(_act_banner, "modulate:a", 1.0, 0.3)
+	tw.tween_interval(2.0)
+	tw.tween_property(_act_banner, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(_act_banner.hide)
+
+
+func _on_decree_completed(title: String, reward_text: String) -> void:
+	_play_sfx("victory")
+	_screen_flash(GOLD, 0.3, 0.38)
+	_lbl_ticker.text = "👑 完成始皇【%s】！赏赐：%s" % [title, reward_text]
+
+
+func _on_weakness_hit(region_id: String, bonus_text: String) -> void:
+	if UV_REGIONS.has(region_id):
+		_spawn_float_text(_uv_to_stage(UV_REGIONS[region_id]) + Vector2(0, -56), "⚡ 弱点暴击 %s" % bonus_text, GOLD)
+
+
+func _on_debate_triggered(debate: Dictionary) -> void:
+	_play_sfx("event")
+	_popover.hide()
+	var a0: Dictionary = debate["advisor_a"]
+	var a1: Dictionary = debate["advisor_b"]
+	if ResourceLoader.exists(a0.get("portrait", "")):
+		_debate_pic_a.texture = load(a0["portrait"])
+	if ResourceLoader.exists(a1.get("portrait", "")):
+		_debate_pic_b.texture = load(a1["portrait"])
+	_debate_name_a.text = "【%s】" % a0["name"]
+	_debate_name_b.text = "【%s】" % a1["name"]
+	_debate_quote_a.text = "「%s」" % debate["option_a"]["quote"]
+	_debate_quote_b.text = "「%s」" % debate["option_b"]["quote"]
+	_debate_btn_a.text = "A. %s" % debate["option_a"]["label"]
+	_debate_btn_b.text = "B. %s" % debate["option_b"]["label"]
+	_debate_panel.show()
 	_sync_modal_shade()

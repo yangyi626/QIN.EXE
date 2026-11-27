@@ -1,6 +1,6 @@
 class_name GameCore
 extends RefCounted
-## 《大秦：2076》纯逻辑核心层（v2.1）
+## 《大秦：2076》纯逻辑核心层（v3.1 · 兼容v2.1测试 + 深度博弈与NPC朝堂介入）
 ## 严禁引用任何 Node、场景树或 UI 节点；UI 仅订阅下方信号并调用公开命令方法。
 
 signal state_changed(snapshot: Dictionary)
@@ -9,12 +9,28 @@ signal event_triggered(event_data: Dictionary)
 signal advisor_spoke(advisor_id: String, advisor_name: String, line: String)
 signal hidden_triggered(hidden_id: String, reward_text: String)
 signal game_ended(ending_code: String, ending_data: Dictionary)
+signal threat_interrupted(region_id: String, reward_text: String)
+signal synergy_activated(synergy_name: String, desc: String)
+signal decree_completed(title: String, reward_text: String)
+signal debate_triggered(debate_data: Dictionary)
+signal weakness_hit(region_id: String, bonus_text: String)
 
 var _data: Dictionary = {}
 var _lines: Dictionary = {}
 var _rng := RandomNumberGenerator.new()
 
 var mvp_only: bool = false
+var tactical_mode: bool = false
+var active_threat: Dictionary = {}
+var active_decree: Dictionary = {}
+var completed_decrees: Dictionary = {}
+var pending_debate: Dictionary = {}
+var triggered_debates: Dictionary = {}
+var first_mil_used_turn: bool = false
+var temp_power_bonus: int = 0
+var perm_decree_power_bonus: int = 0
+var debate_next_mil_bonus: int = 0
+var _announced_synergies: Dictionary = {}
 var turn: int = 1
 var patience: int = 12
 var morale: int = 60
@@ -52,10 +68,21 @@ var game_over_code: String = ""
 var logs: Array[String] = []
 
 
-func init_game(game_data: Dictionary, lines_data: Dictionary = {}, p_mvp_only: bool = false, rng_seed: int = -1) -> void:
+func init_game(game_data: Dictionary, lines_data: Dictionary = {}, p_mvp_only: bool = false, rng_seed: int = -1, p_tactical: bool = false) -> void:
 	_data = game_data.duplicate(true)
 	_lines = lines_data.duplicate(true)
 	mvp_only = p_mvp_only
+	tactical_mode = p_tactical
+	active_threat = {}
+	active_decree = {}
+	completed_decrees.clear()
+	pending_debate = {}
+	triggered_debates.clear()
+	first_mil_used_turn = false
+	temp_power_bonus = 0
+	perm_decree_power_bonus = 0
+	debate_next_mil_bonus = 0
+	_announced_synergies.clear()
 	if rng_seed >= 0:
 		_rng.seed = rng_seed
 	else:
@@ -105,6 +132,9 @@ func init_game(game_data: Dictionary, lines_data: Dictionary = {}, p_mvp_only: b
 
 	_log("公元前221年，你携带未来终端坠落咸阳宫。12回合内一统寰宇，成则万世国师，败则斩首。")
 	_roll_terminal(true)
+	if tactical_mode:
+		_ensure_act_decree()
+		_roll_threat()
 	_emit_state()
 
 
@@ -115,8 +145,51 @@ func has_advisor(advisor_id: String) -> bool:
 	return false
 
 
+func get_active_synergies() -> Array[Dictionary]:
+	var list: Array[Dictionary] = []
+	if not tactical_mode or advisors.size() < 2:
+		return list
+	if has_advisor("zhugeliang") and has_advisor("caocao"):
+		list.append({"id": "wolong_jianxiong", "name": "卧龙奸雄", "desc": "每回合首张军事卡+20伤且免曹操额外-10民心"})
+	if has_advisor("hanxin") and has_advisor("huoqubing"):
+		list.append({"id": "bingxian_guanjun", "name": "兵仙冠军", "desc": "韩信自动打击升至40，攻克任意板块送1次常规进攻"})
+	if has_advisor("libing") and has_advisor("zhangqian"):
+		list.append({"id": "silu_shuili", "name": "丝路水利", "desc": "丝路每回合+12民心，买民生卡当回合秦军战力+10"})
+	if has_advisor("shangyang") and has_advisor("wanganshi"):
+		list.append({"id": "bianfa_shuangbi", "name": "变法双璧", "desc": "解除商鞅80民心上限锁，每回合行动点增至3点"})
+	if has_advisor("tanghe"):
+		list.append({"id": "wanjia_denghuo", "name": "万家灯火", "desc": "回合结束民心>=60时，对最弱前线造成10点王道感化伤害"})
+	return list
+
+
+func has_synergy(syn_id: String) -> bool:
+	for s in get_active_synergies():
+		if s["id"] == syn_id:
+			return true
+	return false
+
+
+func get_region_weakness_info(region_id: String) -> Dictionary:
+	match region_id:
+		"steppe":
+			return {"label": "怕【AK-47/商鞅精锐】：常规进攻暴击 ×1.5", "key": "ak47_or_shangyang"}
+		"west":
+			return {"label": "怕【无人机蜂群】：额外 +15 突袭伤害", "key": "drone"}
+		"south_asia":
+			return {"label": "怕【青霉素】：生效当回常规进攻额外 +12 破甲伤", "key": "penicillin"}
+		"west_asia":
+			return {"label": "怕【无人机蜂群】：沙漠机动克制，额外 +25 伤害", "key": "drone"}
+		"europe":
+			return {"label": "怕【卫星制导重炮】：重甲破防，额外 +35 伤害", "key": "artillery"}
+		"americas":
+			return {"label": "怕【跨海铁甲舰】：抢滩奇袭，额外 +25 伤害", "key": "ironclad"}
+	return {"label": "无特殊弱点", "key": ""}
+
+
 func get_morale_cap() -> int:
-	return 80 if has_advisor("shangyang") else 100
+	if has_advisor("shangyang") and not has_synergy("bianfa_shuangbi"):
+		return 80
+	return 100
 
 
 func get_conquered_count() -> int:
@@ -137,7 +210,7 @@ func get_act() -> int:
 
 
 func get_conventional_power() -> int:
-	var base := 20 + cement_road_bonus + ak47_bonus - overheat_power_debuff
+	var base := 20 + cement_road_bonus + ak47_bonus + perm_decree_power_bonus + temp_power_bonus - overheat_power_debuff
 	if has_advisor("shangyang"):
 		base *= 2
 	return maxi(0, base)
@@ -160,7 +233,8 @@ func get_effective_cheat_delta(cheat: Dictionary) -> int:
 	# v2.1 规定：诸葛亮与王安石同场时 ×0.5 ×0.8 只在最后向上取整一次
 	var final_cost := int(ceil(cost * mult))
 	if cheat["category"] == "military" and has_advisor("caocao"):
-		final_cost += 10
+		if not (tactical_mode and not first_mil_used_turn and has_synergy("wolong_jianxiong")):
+			final_cost += 10
 	return -final_cost
 
 
@@ -231,13 +305,19 @@ func get_snapshot() -> Dictionary:
 			"antarctica": is_hidden_visible("antarctica"),
 		},
 		"pending_event": pending_event.duplicate(true),
+		"pending_debate": pending_debate.duplicate(true),
+		"tactical_mode": tactical_mode,
+		"active_threat": active_threat.duplicate(true),
+		"active_synergies": get_active_synergies(),
+		"active_decree": active_decree.duplicate(true),
+		"debate_next_mil_bonus": debate_next_mil_bonus,
 		"game_over_code": game_over_code,
 		"logs": logs.duplicate(),
 	}
 
 
 func conventional_attack(region_id: String) -> Dictionary:
-	if game_over_code != "" or not pending_event.is_empty():
+	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
 		return {"ok": false, "error": "当前状态不可进攻"}
 	if attack_left <= 0:
 		return {"ok": false, "error": "本回合常规进攻次数已用完"}
@@ -249,14 +329,21 @@ func conventional_attack(region_id: String) -> Dictionary:
 	var r := _find_region(region_id)
 	var eff: float = 1.0 if (region_id == "south_asia" and penicillin_turn) else float(r["efficiency"])
 	var dmg := int(floor(float(get_conventional_power()) * eff))
-	attack_left = 0
+	if tactical_mode:
+		if region_id == "steppe" and (ak47_bonus > 0 or has_advisor("shangyang")):
+			dmg = int(floor(float(dmg) * 1.5))
+			weakness_hit.emit(region_id, "精锐克制 ×1.5")
+		elif region_id == "south_asia" and penicillin_turn:
+			dmg += 12
+			weakness_hit.emit(region_id, "瘟疫退散 +12")
+	attack_left -= 1
 	var res := _apply_damage(region_id, dmg, false, "常规秦军")
 	_emit_state()
 	return res
 
 
 func build_fleet() -> Dictionary:
-	if game_over_code != "" or not pending_event.is_empty():
+	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
 		return {"ok": false, "error": "当前状态不可造船"}
 	if sea_unlocked:
 		return {"ok": false, "error": "渡海航线已打通"}
@@ -273,7 +360,7 @@ func build_fleet() -> Dictionary:
 
 
 func refresh_terminal() -> Dictionary:
-	if game_over_code != "" or not pending_event.is_empty():
+	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
 		return {"ok": false, "error": "当前状态不可刷新"}
 	if overheat_no_refresh:
 		return {"ok": false, "error": "终端降频运行中，本回合无法刷新"}
@@ -292,7 +379,7 @@ func refresh_terminal() -> Dictionary:
 
 
 func summon_advisor(slot_index: int, replace_index: int = -1) -> Dictionary:
-	if game_over_code != "" or not pending_event.is_empty():
+	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
 		return {"ok": false, "error": "当前状态不可召唤"}
 	if actions_left <= 0:
 		return {"ok": false, "error": "本回合行动点已用完"}
@@ -328,12 +415,19 @@ func summon_advisor(slot_index: int, replace_index: int = -1) -> Dictionary:
 	var line := _get_advisor_line(adv["id"], "summon")
 	_log("召唤 AI 名臣【%s】：%s" % [adv["name"], line])
 	advisor_spoke.emit(adv["id"], adv["name"], line)
+	if tactical_mode:
+		for syn in get_active_synergies():
+			if not _announced_synergies.has(syn["id"]):
+				_announced_synergies[syn["id"]] = true
+				_log("✦ 激活名臣羁绊【%s】：%s" % [syn["name"], syn["desc"]])
+				synergy_activated.emit(syn["name"], syn["desc"])
+		_check_decree_progress()
 	_emit_state()
 	return {"ok": true, "advisor_id": adv["id"], "cost": cost}
 
 
 func buy_cheat(slot_index: int, target_region_id: String = "") -> Dictionary:
-	if game_over_code != "" or not pending_event.is_empty():
+	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
 		return {"ok": false, "error": "当前状态不可购买"}
 	if actions_left <= 0:
 		return {"ok": false, "error": "本回合行动点已用完"}
@@ -367,6 +461,18 @@ func buy_cheat(slot_index: int, target_region_id: String = "") -> Dictionary:
 		return {"ok": true, "cheat_id": cheat["id"]}
 
 	var cao_mult := 2 if (cheat["category"] == "military" and has_advisor("caocao")) else 1
+	var extra_mil := 0
+	if tactical_mode:
+		if cheat["category"] == "livelihood" and has_synergy("silu_shuili"):
+			temp_power_bonus += 10
+			_log("【丝路水利】民生兴邦，本回合常规秦军战力 +10！")
+		if cheat["category"] == "military":
+			if not first_mil_used_turn and has_synergy("wolong_jianxiong"):
+				extra_mil += 20
+			first_mil_used_turn = true
+			if debate_next_mil_bonus > 0:
+				extra_mil += debate_next_mil_bonus
+				debate_next_mil_bonus = 0
 	var strike_res: Dictionary = {}
 
 	match cheat["id"]:
@@ -383,15 +489,30 @@ func buy_cheat(slot_index: int, target_region_id: String = "") -> Dictionary:
 			_log("【义务教育】推行，本回合无法常规进攻。")
 		"drone":
 			var instant := has_advisor("huoqubing")
-			strike_res = _apply_damage(target_region_id, int(cheat["damage"]) * cao_mult, instant, "无人机蜂群")
+			var w_bonus := 0
+			if tactical_mode and target_region_id == "west_asia":
+				w_bonus = 25
+				weakness_hit.emit(target_region_id, "沙漠克制 +25")
+			elif tactical_mode and target_region_id == "west":
+				w_bonus = 15
+				weakness_hit.emit(target_region_id, "戈壁突袭 +15")
+			strike_res = _apply_damage(target_region_id, int(cheat["damage"]) * cao_mult + extra_mil + w_bonus, instant, "无人机蜂群")
 		"artillery":
-			strike_res = _apply_damage(target_region_id, int(cheat["damage"]) * cao_mult, false, "卫星制导重炮")
+			var a_bonus := 0
+			if tactical_mode and target_region_id == "europe":
+				a_bonus = 35
+				weakness_hit.emit(target_region_id, "重甲破防 +35")
+			strike_res = _apply_damage(target_region_id, int(cheat["damage"]) * cao_mult + extra_mil + a_bonus, false, "卫星制导重炮")
 		"ak47":
 			ak47_bonus += 30 * cao_mult
 			_log("【AK-47 兵马俑】列装，常规秦军永久 +%d。" % (30 * cao_mult))
 		"ironclad":
 			sea_unlocked = true
-			strike_res = _apply_damage(target_region_id, int(cheat["damage"]) * cao_mult, false, "跨海铁甲舰")
+			var i_bonus := 0
+			if tactical_mode and target_region_id == "americas":
+				i_bonus = 25
+				weakness_hit.emit(target_region_id, "抢滩奇袭 +25")
+			strike_res = _apply_damage(target_region_id, int(cheat["damage"]) * cao_mult + extra_mil + i_bonus, false, "跨海铁甲舰")
 		"cyber_burn":
 			cyber_burn_turns = 2
 			_log("【赛博焚书】生效 2 回合，结束时反噬 -35 民心。")
@@ -409,7 +530,7 @@ func buy_cheat(slot_index: int, target_region_id: String = "") -> Dictionary:
 
 
 func trigger_hidden(hidden_id: String) -> Dictionary:
-	if game_over_code != "" or not pending_event.is_empty():
+	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
 		return {"ok": false, "error": "当前状态不可触发隐藏关"}
 	if not is_hidden_visible(hidden_id):
 		return {"ok": false, "error": "该隐藏关尚未显现或已触发"}
@@ -447,8 +568,24 @@ func trigger_hidden(hidden_id: String) -> Dictionary:
 
 
 func end_turn() -> Dictionary:
-	if game_over_code != "" or not pending_event.is_empty():
+	if game_over_code != "" or not pending_event.is_empty() or not pending_debate.is_empty():
 		return {"ok": false, "error": "当前无法结束回合"}
+
+	if tactical_mode:
+		# 万家灯火羁绊：民心 >= 60 时自动对最弱前线造成 10 点王道感化伤
+		if has_synergy("wanjia_denghuo") and morale >= 60:
+			var front := _unconquered_regions()
+			if not front.is_empty():
+				front.sort_custom(func(a, b): return int(a["hp"]) < int(b["hp"]))
+				_apply_damage(front[0]["id"], 10, false, "万家灯火感化")
+				if game_over_code != "":
+					_emit_state()
+					return {"ok": true}
+		# 结算未被破招打断的敌军意图
+		_resolve_threat_on_end_turn()
+		if game_over_code != "":
+			_emit_state()
+			return {"ok": true}
 
 	if cyber_burn_turns > 0:
 		cyber_burn_turns -= 1
@@ -537,18 +674,23 @@ func _advance_to_next_turn() -> void:
 		_trigger_ending("lose_time")
 		return
 
-	actions_left = maxi(0, 2 - next_turn_action_penalty)
+	var base_actions := 3 if (tactical_mode and has_synergy("bianfa_shuangbi")) else 2
+	actions_left = maxi(0, base_actions - next_turn_action_penalty)
 	next_turn_action_penalty = 0
 	attack_left = 1
 	refreshes_left = 0 if overheat_no_refresh else 3
 	penicillin_turn = false
 	education_turn = false
 	free_hook_available = false
+	first_mil_used_turn = false
+	debate_next_mil_bonus = 0
+	temp_power_bonus = 0
 
 	# v2.1 固定回合开始结算顺序：1.丝路 -> 2.贷款 -> 3.韩信 -> 4.刷新终端
 	var west := _find_region("west")
 	if not west.is_empty() and west["conquered"]:
-		_modify_morale(5, "丝绸之路红利", false)
+		var silk_gain := 12 if (tactical_mode and has_synergy("silu_shuili")) else 5
+		_modify_morale(silk_gain, "丝绸之路红利", false)
 
 	if not loan_queue.is_empty():
 		var due: int = loan_queue.pop_front()
@@ -560,7 +702,8 @@ func _advance_to_next_turn() -> void:
 		var targets := _unconquered_regions()
 		if not targets.is_empty():
 			var t: Dictionary = targets[_rng.randi_range(0, targets.size() - 1)]
-			_apply_damage(t["id"], 25, false, "韩信自动打击")
+			var hx_dmg := 40 if (tactical_mode and has_synergy("bingxian_guanjun")) else 25
+			_apply_damage(t["id"], hx_dmg, false, "韩信自动打击")
 			if game_over_code != "":
 				return
 
@@ -578,6 +721,11 @@ func _advance_to_next_turn() -> void:
 		var bucket := "hidden_hint" if (morale < 40 and is_hidden_visible("dazexiang")) else ("low_morale" if morale < 45 else "normal")
 		var line := _get_advisor_line(sp["id"], bucket)
 		advisor_spoke.emit(sp["id"], sp["name"], line)
+
+	if tactical_mode and game_over_code == "":
+		_ensure_act_decree()
+		_roll_threat()
+		_maybe_trigger_debate()
 
 
 func _roll_terminal(is_first_turn: bool) -> void:
@@ -647,9 +795,19 @@ func _apply_damage(region_id: String, raw_damage: int, instant_kill: bool, sourc
 		conquered_now = true
 		if has_advisor("zhangqian"):
 			_modify_morale(8, "张骞通商", false)
+	if tactical_mode and dmg > 0 and not active_threat.is_empty() and not bool(active_threat.get("interrupted", false)) and active_threat.get("region_id", "") == region_id:
+		active_threat["interrupted"] = true
+		_modify_morale(5, "破招打断敌军意图", false)
+		_log("⚡ 破招打断【%s】！民心 +5。" % active_threat["title"])
+		threat_interrupted.emit(region_id, "破招成功！民心 +5")
+	if tactical_mode and conquered_now and has_synergy("bingxian_guanjun"):
+		attack_left += 1
+		_log("【兵仙冠军】乘胜追击！额外获得 1 次免费常规进攻！")
 	strike_performed.emit(region_id, dmg, source, conquered_now)
 	if conquered_now and get_conquered_count() >= 6:
 		_trigger_ending("win_sage" if morale >= 60 else "win_tyrant")
+	elif tactical_mode:
+		_check_decree_progress()
 	return {"ok": true, "damage": dmg, "conquered": conquered_now}
 
 
@@ -693,3 +851,150 @@ func _log(msg: String) -> void:
 
 func _emit_state() -> void:
 	state_changed.emit(get_snapshot())
+
+
+# --- 深度博弈与牌桌 NPC 实时介入（仅 tactical_mode = true 时生效） ---
+func _roll_threat() -> void:
+	active_threat = {}
+	var candidates: Array[Dictionary] = []
+	for r in regions:
+		if not r["conquered"] and can_attack_region(r["id"]):
+			candidates.append(r)
+	if candidates.is_empty():
+		candidates = _unconquered_regions()
+	if candidates.is_empty():
+		return
+	var target: Dictionary = candidates[_rng.randi_range(0, candidates.size() - 1)]
+	var types := [
+		{"type": "raid", "title": "边疆劫掠", "desc": "回合结束未打断：民心 -10（汤和减半）"},
+		{"type": "fortify", "title": "紧急筑城", "desc": "回合结束未打断：该洲守军恢复 +15"},
+		{"type": "sabotage", "title": "截断粮道", "desc": "回合结束未打断：下回合行动 -1"},
+	]
+	var pick: Dictionary = types[_rng.randi_range(0, types.size() - 1)]
+	active_threat = {
+		"region_id": target["id"],
+		"region_name": target["name"],
+		"type": pick["type"],
+		"title": pick["title"],
+		"desc": pick["desc"],
+		"interrupted": false,
+	}
+
+
+func _resolve_threat_on_end_turn() -> void:
+	if active_threat.is_empty() or bool(active_threat.get("interrupted", false)):
+		return
+	var rid: String = active_threat["region_id"]
+	var r := _find_region(rid)
+	if r.is_empty() or r["conquered"]:
+		return
+	match active_threat["type"]:
+		"raid":
+			var loss := 5 if has_advisor("tanghe") else 10
+			_log("⚠ 敌军【%s·边疆劫掠】未打断，民心 -%d！" % [r["name"], loss])
+			_modify_morale(-loss, "敌军劫掠", false)
+		"fortify":
+			r["hp"] = mini(int(r["max_hp"]), int(r["hp"]) + 15)
+			_log("⚠ 敌军【%s·紧急筑城】未打断，守军恢复 +15！" % r["name"])
+		"sabotage":
+			next_turn_action_penalty += 1
+			_log("⚠ 敌军【%s·截断粮道】未打断，下回合行动 -1！" % r["name"])
+
+
+func _ensure_act_decree() -> void:
+	var act := get_act()
+	if not active_decree.is_empty() and int(active_decree.get("act", 0)) == act:
+		return
+	if completed_decrees.has(act):
+		active_decree = {}
+		return
+	match act:
+		1:
+			active_decree = {"act": 1, "id": "decree_west", "title": "初征御旨", "goal": "第 4 回合前攻克【西域与中亚】", "reward": "民心 +15 · 耐心 +1", "done": false}
+		2:
+			active_decree = {"act": 2, "id": "decree_interrupt", "title": "守民御旨", "goal": "破招打断敌军意图且保持民心 ≥ 55", "reward": "常规秦军永久 +15 战力", "done": false}
+		3:
+			active_decree = {"act": 3, "id": "decree_final", "title": "决战御旨", "goal": "满编 2 名臣且攻克欧罗巴或美洲", "reward": "民心 +20 · 行动 +1", "done": false}
+
+
+func _check_decree_progress() -> void:
+	if active_decree.is_empty() or bool(active_decree.get("done", false)):
+		return
+	var ok := false
+	match active_decree["id"]:
+		"decree_west":
+			var w := _find_region("west")
+			ok = (not w.is_empty() and w["conquered"] and turn <= 4)
+			if ok:
+				_modify_morale(15, "初征御旨赏赐", false)
+				patience += 1
+		"decree_interrupt":
+			ok = (not active_threat.is_empty() and bool(active_threat.get("interrupted", false)) and morale >= 55)
+			if ok:
+				perm_decree_power_bonus += 15
+		"decree_final":
+			var eu := _find_region("europe")
+			var am := _find_region("americas")
+			ok = (advisors.size() >= 2 and ((not eu.is_empty() and eu["conquered"]) or (not am.is_empty() and am["conquered"])))
+			if ok:
+				_modify_morale(20, "决战御旨赏赐", false)
+				actions_left += 1
+	if ok:
+		active_decree["done"] = true
+		completed_decrees[active_decree["act"]] = true
+		_log("👑 完成始皇【%s】！赏赐：%s。" % [active_decree["title"], active_decree["reward"]])
+		decree_completed.emit(active_decree["title"], active_decree["reward"])
+
+
+func _maybe_trigger_debate() -> void:
+	if advisors.size() < 2 or not pending_event.is_empty() or not pending_debate.is_empty():
+		return
+	if turn not in [2, 5, 8] or triggered_debates.has(turn):
+		return
+	triggered_debates[turn] = true
+	var a0: Dictionary = advisors[0]
+	var a1: Dictionary = advisors[1]
+	var opt0 := _advisor_debate_offer(a0)
+	var opt1 := _advisor_debate_offer(a1)
+	pending_debate = {
+		"turn": turn,
+		"advisor_a": a0.duplicate(true),
+		"advisor_b": a1.duplicate(true),
+		"option_a": opt0,
+		"option_b": opt1,
+	}
+	debate_triggered.emit(pending_debate)
+
+
+func _advisor_debate_offer(adv: Dictionary) -> Dictionary:
+	var aid: String = adv["id"]
+	if aid in ["zhugeliang", "libing", "zhangqian", "tanghe"]:
+		return {
+			"quote": "陛下，宜先安万民之心，方能长治久安！",
+			"label": "采纳【%s】：民心 +14，并免费获 1 次刷新" % adv["name"],
+			"effect": "benevolent",
+		}
+	return {
+		"quote": "机不可失！当以雷霆科技一举碾碎强敌！",
+		"label": "采纳【%s】：本回合下张军事外挂 +30 伤（民心 -6）" % adv["name"],
+		"effect": "aggressive",
+	}
+
+
+func resolve_debate(choice: String) -> Dictionary:
+	if pending_debate.is_empty():
+		return {"ok": false, "error": "当前没有待裁决的朝堂争辩"}
+	var d := pending_debate
+	pending_debate = {}
+	var picked: Dictionary = d["option_a"] if choice == "A" else d["option_b"]
+	var adv: Dictionary = d["advisor_a"] if choice == "A" else d["advisor_b"]
+	if picked["effect"] == "benevolent":
+		_modify_morale(14, "朝堂争辩·" + adv["name"], false)
+		refreshes_left = mini(3, refreshes_left + 1)
+		_log("你采纳了【%s】的仁政之议：民心 +14，刷新 +1。" % adv["name"])
+	else:
+		debate_next_mil_bonus += 30
+		_modify_morale(-6, "朝堂争辩·" + adv["name"], false)
+		_log("你采纳了【%s】的铁血之议：下张军事外挂 +30 伤，民心 -6。" % adv["name"])
+	_emit_state()
+	return {"ok": true}
