@@ -5,7 +5,6 @@ extends Control
 var core := GameCore.new()
 var _game_data: Dictionary = {}
 var _lines_data: Dictionary = {}
-var _mvp_only: bool = false
 var _tactical_mode: bool = true
 
 # 调色板（玄黑 / 暗青铜 / 火把鎏金 / 赛博青 / 警报猩红）
@@ -142,7 +141,6 @@ var _threat_label: Label
 var _lbl_ticker: Label
 var _btn_refresh: Button
 var _btn_fleet: Button
-var _btn_pool: Button
 var _btn_mute: Button
 var _btn_cancel_aim: Button
 var _btn_pact: Button
@@ -163,7 +161,16 @@ var _cutin_pic_l: TextureRect
 var _cutin_pic_r: TextureRect
 var _cutin_title: Label
 var _cutin_sub: Label
-var _meta_save: Dictionary = {"summoned": [], "endings": [], "wins": 0, "runs": 0, "best_grade": "", "tutorial_done": false}
+var _meta_save: Dictionary = {"summoned": [], "endings": [], "wins": 0, "runs": 0, "best_grade": "", "tutorial_done": false, "cipher_0221": false, "legacy_edict": {}}
+var _crt_modal: PanelContainer
+var _crt_input: LineEdit
+var _crt_msg: Label
+var _forge_panel: PanelContainer
+var _forge_name_edit: LineEdit
+var _forge_choice: String = "legacy_strike"
+var _forge_opt_btns: Dictionary = {}
+var _btn_forge_legacy: Button
+var _legacy_forged_this_loss: bool = false
 var _title_curtain: Control
 var _rules_panel: PanelContainer
 var _log_panel: PanelContainer
@@ -174,6 +181,15 @@ var _codex_scroll: ScrollContainer
 var _codex_tab_adv: Button
 var _codex_tab_cheat: Button
 var _codex_tab_lands: Button
+var _codex_tab_graph: Button
+var _codex_graph_wrap: VBoxContainer
+var _codex_graph_canvas: Control
+var _codex_graph_title: Label
+var _codex_graph_desc: Label
+var _graph_hover_id: String = ""
+var _graph_pin_id: String = ""
+var _graph_node_pos: Dictionary = {}
+var _graph_tex_cache: Dictionary = {}
 var _codex_mode: String = "advisors"
 var _modal_shade: ColorRect
 var _modal_layer := CanvasLayer.new()
@@ -619,7 +635,7 @@ func _build_stage_and_ui() -> void:
 	_button(util, "战录(L)", _toggle_logs, GOLD)
 	_button(util, "简则(H)", _toggle_rules, CYAN)
 	_btn_mute = _button(util, "音效", _toggle_mute, CYAN)
-	_btn_pool = _button(util, "完整池", _toggle_pool, GOLD)
+	_button(util, "⌘ 密令", _open_crt_cipher, CYAN)
 	_button(util, "重开", func(): _play_sfx("click"); _restart(true), GOLD)
 
 	# 10. 左下角轻量化战报与隐藏关入口
@@ -763,10 +779,75 @@ func _build_stage_and_ui() -> void:
 	var end_btns := HBoxContainer.new()
 	end_btns.add_theme_constant_override("separation", 10)
 	end_box.add_child(end_btns)
+	_btn_forge_legacy = _button(end_btns, "📜 篆刻先师遗诏(带入下局)", _open_forge_modal, GOLD)
+	_btn_forge_legacy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_btn_forge_legacy.hide()
 	var btn_re := _button(end_btns, "再启推演", func(): _play_sfx("chime"); _restart(true), GOLD)
 	btn_re.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var btn_home := _button(end_btns, "返回主屏", func(): _play_sfx("click"); _show_title_curtain(), CYAN)
 	btn_home.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	# 12b. 2076 终端机密口令弹窗（牌桌微解谜）
+	_crt_modal = _make_modal(Vector2(540, 340))
+	var cm_box := VBoxContainer.new()
+	cm_box.add_theme_constant_override("separation", 10)
+	_crt_modal.add_child(cm_box)
+	_label(cm_box, "> TERMINAL_2076 // ROOT_OVERRIDE_CONSOLE", 14, CYAN)
+	var cm_sub := _label(cm_box, "输入 4 位历史校准秘钥以骇入底层权限。\n线索散落于【左侧青铜鼎铭文】与【藏经阁 · 九州舆图 · 咸阳宫碑文】。", 13, Color("#d4e4e6"))
+	cm_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_crt_input = LineEdit.new()
+	_crt_input.placeholder_text = "输入 4 位数字秘钥（如 ____）"
+	_crt_input.max_length = 4
+	_crt_input.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_crt_input.add_theme_font_size_override("font_size", 24)
+	_crt_input.add_theme_color_override("font_color", CYAN)
+	_crt_input.add_theme_stylebox_override("normal", _flat_style(Color(0.02, 0.06, 0.08, 0.96), CYAN, 6, 8))
+	_crt_input.text_submitted.connect(func(_t): _submit_crt_cipher())
+	cm_box.add_child(_crt_input)
+	_crt_msg = _label(cm_box, "> 等待输入历史校准秘钥……", 12, MUTED)
+	_crt_msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_crt_msg.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var cm_btns := HBoxContainer.new()
+	cm_btns.add_theme_constant_override("separation", 10)
+	cm_box.add_child(cm_btns)
+	var cm_go := _button(cm_btns, "⚡ 执行骇入", _submit_crt_cipher, CYAN)
+	cm_go.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var cm_cl := _button(cm_btns, "关闭", func(): _play_sfx("click"); _crt_modal.hide(); _sync_modal_shade(), MUTED)
+	cm_cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	# 12c. 败局铸造【先师遗诏】弹窗（死亡卡跨局传承）
+	_forge_panel = _make_modal(Vector2(600, 440))
+	var fg_box := VBoxContainer.new()
+	fg_box.add_theme_constant_override("separation", 10)
+	_forge_panel.add_child(fg_box)
+	_label(fg_box, "📜 败局铸卡  /  篆刻【先师遗诏】", 19, GOLD)
+	var fg_desc := _label(fg_box, "虽败犹荣——将本局残存的意志篆刻为一枚 0 费【先师遗诏】，下一局开局自动置入秘技栏！", 13, Color("#e4e6e6"))
+	fg_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_forge_name_edit = LineEdit.new()
+	_forge_name_edit.placeholder_text = "为这枚遗诏命名（最多12字）"
+	_forge_name_edit.max_length = 12
+	_forge_name_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_forge_name_edit.add_theme_font_size_override("font_size", 18)
+	_forge_name_edit.add_theme_color_override("font_color", GOLD)
+	_forge_name_edit.add_theme_stylebox_override("normal", _flat_style(Color(0.06, 0.05, 0.03, 0.96), GOLD, 6, 6))
+	fg_box.add_child(_forge_name_edit)
+	_label(fg_box, "择取一项传世遗志：", 13, CYAN)
+	var fg_specs := [
+		["legacy_strike", "⚔ 破阵遗锋：0费对全体敌方造成 40 伤害，并回复 10 民心", CRIMSON],
+		["legacy_morale", "🌿 万民遗泽：0费回复 30 民心，本回合行动 +1、刷新 +1", SAGE],
+		["legacy_overclock", "⚡ 逆天改命：0费令下次攻击伤害 ×2、常规进攻 +1、免费重抽手牌", VIOLET],
+	]
+	for sp in fg_specs:
+		var sid: String = sp[0]
+		var b_opt := _button(fg_box, sp[1], func(): _select_forge_choice(sid), sp[2])
+		_forge_opt_btns[sid] = b_opt
+	var fg_btns := HBoxContainer.new()
+	fg_btns.add_theme_constant_override("separation", 10)
+	fg_box.add_child(fg_btns)
+	var fg_ok := _button(fg_btns, "🔥 焚香篆刻 · 传于后世", _confirm_forge_legacy, GOLD)
+	fg_ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var fg_no := _button(fg_btns, "暂不篆刻", func(): _play_sfx("click"); _forge_panel.hide(); _ending_panel.show(); _sync_modal_shade(), MUTED)
+	fg_no.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	_hidden_panel = _make_modal(Vector2(650, 505))
 	var h_box := VBoxContainer.new()
@@ -885,9 +966,10 @@ func _build_stage_and_ui() -> void:
 	c_hdr.add_theme_constant_override("separation", 10)
 	c_box.add_child(c_hdr)
 	_label(c_hdr, "咸阳藏经阁", 22, GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_codex_tab_adv = _button(c_hdr, "👑 历史名臣 (18)", func(): _play_sfx("click"); _codex_mode = "advisors"; _populate_codex(), GOLD)
-	_codex_tab_cheat = _button(c_hdr, "⚡ 外挂 (12)", func(): _play_sfx("click"); _codex_mode = "cheats"; _populate_codex(), CYAN)
-	_codex_tab_lands = _button(c_hdr, "🏛 九州舆图 (7)", func(): _play_sfx("click"); _codex_mode = "landmarks"; _populate_codex(), GOLD)
+	_codex_tab_adv = _button(c_hdr, "👑 名臣(18)", func(): _play_sfx("click"); _codex_mode = "advisors"; _populate_codex(), GOLD)
+	_codex_tab_graph = _button(c_hdr, "🕸 羁绊图谱(14)", func(): _play_sfx("click"); _codex_mode = "graph"; _populate_codex(), CYAN)
+	_codex_tab_cheat = _button(c_hdr, "⚡ 外挂(12)", func(): _play_sfx("click"); _codex_mode = "cheats"; _populate_codex(), CYAN)
+	_codex_tab_lands = _button(c_hdr, "🏛 舆图(7)", func(): _play_sfx("click"); _codex_mode = "landmarks"; _populate_codex(), GOLD)
 	_button(c_hdr, "关闭 (C)", _toggle_codex, MUTED)
 	_codex_scroll = ScrollContainer.new()
 	_codex_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -899,6 +981,31 @@ func _build_stage_and_ui() -> void:
 	_codex_grid.add_theme_constant_override("v_separation", 12)
 	_codex_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_codex_scroll.add_child(_codex_grid)
+
+	_codex_graph_wrap = VBoxContainer.new()
+	_codex_graph_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_codex_graph_wrap.add_theme_constant_override("separation", 8)
+	_codex_graph_wrap.hide()
+	c_box.add_child(_codex_graph_wrap)
+
+	_codex_graph_canvas = Control.new()
+	_codex_graph_canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_codex_graph_canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_codex_graph_canvas.mouse_filter = Control.MOUSE_FILTER_STOP
+	_codex_graph_canvas.draw.connect(_draw_codex_graph)
+	_codex_graph_canvas.gui_input.connect(_on_codex_graph_input)
+	_codex_graph_wrap.add_child(_codex_graph_canvas)
+
+	var g_info := PanelContainer.new()
+	g_info.custom_minimum_size = Vector2(0, 86)
+	g_info.add_theme_stylebox_override("panel", _flat_style(Color(0.04, 0.055, 0.075, 0.94), GOLD, 10, 8))
+	_codex_graph_wrap.add_child(g_info)
+	var giv := VBoxContainer.new()
+	giv.add_theme_constant_override("separation", 4)
+	g_info.add_child(giv)
+	_codex_graph_title = _label(giv, "", 14, GOLD)
+	_codex_graph_desc = _label(giv, "", 12, Color("#dff0f2"))
+	_codex_graph_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 	# 13. 电影感开场主屏幕布
 	_title_curtain = Control.new()
@@ -998,8 +1105,17 @@ func _populate_codex() -> void:
 		_codex_grid.remove_child(ch)
 		ch.queue_free()
 	_codex_tab_adv.modulate = GOLD if _codex_mode == "advisors" else MUTED
+	_codex_tab_graph.modulate = GOLD if _codex_mode == "graph" else MUTED
 	_codex_tab_cheat.modulate = CYAN if _codex_mode == "cheats" else MUTED
 	_codex_tab_lands.modulate = GOLD if _codex_mode == "landmarks" else MUTED
+	if _codex_mode == "graph":
+		_codex_scroll.hide()
+		_codex_graph_wrap.show()
+		_refresh_codex_graph_info()
+		_codex_graph_canvas.queue_redraw()
+		return
+	_codex_graph_wrap.hide()
+	_codex_scroll.show()
 	if _codex_mode == "advisors":
 		var idx := 1
 		for adv in _game_data.get("advisors", []):
@@ -1022,7 +1138,7 @@ func _populate_codex() -> void:
 		_codex_grid.add_child(_make_codex_card(
 			"大秦 · 咸阳宫", "秦", "本营",
 			"咸阳宫与万里长城：玄黑帝国龙兴之地，当前常规秦军战力 %d。" % int(_latest.get("conventional_power", 20)),
-			"点击沙盘本营可随时巡视国力", "- 帝国核心 -", "MAP.00",
+			"石碑残字：前 ??21 年天降终端，右上【⌘ 密令】可启权限", "- 帝国核心 -", "MAP.00",
 			GOLD, Color("#3a2c16"), "res://assets/landmarks/xianyang.jpg"
 		))
 		var midx := 1
@@ -1764,7 +1880,7 @@ func _interact_tabletop_prop(prop: String) -> void:
 		_spawn_sparks(cp + Vector2(0, -16), Color("#ff9c3b"), 28, 190.0, -140.0)
 		_pulses.append({"pos": cp, "col": GOLD, "t": 0.0, "max_r": 72.0})
 		_screen_flash(Color("#ff9c3b"), 0.14, 0.24)
-		_lbl_ticker.text = "🔥 咸阳青铜鼎火光大盛，照彻玄黑沙盘！"
+		_lbl_ticker.text = "🔥 炉火映出鼎内青铜铭文：「统六合之岁，乃终端初代秘钥——【02??】」"
 	elif prop == "emperor":
 		_play_sfx("event")
 		_emperor_glare_timer = 2.6
@@ -1775,7 +1891,7 @@ func _interact_tabletop_prop(prop: String) -> void:
 		var emp_lines := [
 			"「国师，朕给你的十二回合，可不是让你在殿上观火的。」",
 			"「六合之内，皇帝之土。何处未染玄黑，便向何处亮剑！」",
-			"「善用名臣羁绊，莫让万民离心，亦莫让朕久等。」",
+			"「朕于前二二一年一统天下……若汝能破终端【⌘ 密令】，便赐汝破壁之权！」",
 		]
 		if bool(_latest.get("paradox_phase", false)):
 			emp_lines = ["「2076 终端竟敢反噬大秦？国师，给朕轰碎它！」"]
@@ -1793,8 +1909,7 @@ func _interact_tabletop_prop(prop: String) -> void:
 			_cancel_aim()
 			_result(core.refresh_terminal())
 		else:
-			_play_sfx("hover")
-			_lbl_ticker.text = "⚡ [TERMINAL_2076] 显像管发出滋滋电流声：本回合刷新额度已耗尽。"
+			_open_crt_cipher()
 	elif prop.begins_with("advisor_"):
 		var ai := int(prop.substr(8))
 		var advs: Array = _latest.get("advisors", [])
@@ -1843,6 +1958,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if _replace_panel.visible and event.is_action_pressed("ui_cancel"):
 		_cancel_replace()
+		get_viewport().set_input_as_handled()
+		return
+	if _crt_modal != null and _crt_modal.visible and event.is_action_pressed("ui_cancel"):
+		_crt_modal.hide(); _sync_modal_shade()
+		get_viewport().set_input_as_handled()
+		return
+	if _forge_panel != null and _forge_panel.visible and event.is_action_pressed("ui_cancel"):
+		_forge_panel.hide(); _ending_panel.show(); _sync_modal_shade()
 		get_viewport().set_input_as_handled()
 		return
 	if _modal_shade.visible:
@@ -1954,16 +2077,13 @@ func _restart(show_banner: bool = true) -> void:
 	for i in range(2):
 		_bubbles[i].hide()
 		_bubble_timers[i] = 0.0
-	core.init_game(_game_data, _lines_data, _mvp_only, -1, _tactical_mode)
+	_legacy_forged_this_loss = false
+	core.init_game(_game_data, _lines_data, false, -1, _tactical_mode)
+	var leg: Variant = _meta_save.get("legacy_edict", {})
+	if leg is Dictionary and not leg.is_empty() and leg.has("id"):
+		core.inject_legacy_card(leg)
 	if show_banner and not _title_curtain.visible:
 		_show_act_banner(1)
-
-
-func _toggle_pool() -> void:
-	_play_sfx("click")
-	_mvp_only = not _mvp_only
-	_btn_pool.text = "精简池" if _mvp_only else "完整池"
-	_restart(true)
 
 
 func _sync_modal_shade() -> void:
@@ -1974,6 +2094,8 @@ func _sync_modal_shade() -> void:
 		or _rules_panel.visible
 		or _log_panel.visible
 		or _codex_panel.visible
+		or (_crt_modal != null and _crt_modal.visible)
+		or (_forge_panel != null and _forge_panel.visible)
 		or _hidden_panel.visible
 		or _debate_panel.visible
 		or _pact_panel.visible
@@ -2198,7 +2320,15 @@ func _rebuild_hand_cards(animate_deal: bool = false) -> void:
 			_cancel_aim()
 			var res := core.cast_secret_card(si)
 			if res.get("ok", false):
-				_show_cutin("★ 国师秘技 · %s" % sc_name, sc_desc, GOLD)
+				var cast_id: String = str(res.get("secret_id", ""))
+				if cast_id.begins_with("legacy_"):
+					_meta_save["legacy_edict"] = {}
+					_save_meta_save()
+					_show_cutin("📜 传世遗诏 · %s" % sc_name, sc_desc, GOLD)
+				elif cast_id == "secret_cipher_key":
+					_show_cutin("🔑 传国密钥 · 破壁", sc_desc, CYAN)
+				else:
+					_show_cutin("★ 国师秘技 · %s" % sc_name, sc_desc, GOLD)
 			_result(res)
 		, GOLD)
 		sb.add_theme_stylebox_override("normal", _flat_style(Color(0.16, 0.11, 0.04, 0.94), GOLD, 8, 6))
@@ -2706,6 +2836,8 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 		achs.append("☢ 核平天下")
 	if won and broke_paradox:
 		achs.append("⚡ 破壁国师(击碎2076焚书协议)")
+	if bool(final_state.get("cipher_0221_used", false)):
+		achs.append("🔑 破译天机(0221)")
 	if won and adv_names.size() >= 2:
 		achs.append("👑 不朽双壁")
 	_ending_ach.text = "本局解锁勋章：" + ("  ".join(achs) if not achs.is_empty() else "尚无勋章（下次试试触发隐藏关或带名臣通关！）")
@@ -2722,6 +2854,10 @@ func _on_game_ended(code: String, data: Dictionary) -> void:
 	if int(rank_order.get(grade, 0)) > int(rank_order.get(str(_meta_save.get("best_grade", "")), 0)):
 		_meta_save["best_grade"] = grade
 	_save_meta_save()
+	if _btn_forge_legacy != null:
+		_btn_forge_legacy.visible = not won
+		_btn_forge_legacy.disabled = _legacy_forged_this_loss
+		_btn_forge_legacy.text = "✓ 遗诏已篆刻(下局生效)" if _legacy_forged_this_loss else "📜 篆刻先师遗诏(带入下局)"
 	_ending_panel.show()
 	_sync_modal_shade()
 
@@ -2915,3 +3051,295 @@ func _on_pact_made(title: String, desc: String) -> void:
 	_screen_flash(CRIMSON, 0.42, 0.45)
 	_shake_strength = 12.0
 	_lbl_ticker.text = "🔥 始皇密匣【%s】：%s" % [title, desc]
+
+
+func _open_crt_cipher() -> void:
+	if _crt_modal == null or _title_curtain.visible:
+		return
+	_play_sfx("click")
+	_cancel_aim()
+	_popover.hide()
+	_crt_input.text = ""
+	_crt_msg.modulate = CYAN
+	_crt_msg.text = "> 等待输入 4 位历史校准秘钥……"
+	_crt_modal.show()
+	_sync_modal_shade()
+	_crt_input.grab_focus()
+
+
+func _submit_crt_cipher() -> void:
+	var code := _crt_input.text.strip_edges()
+	var res := core.redeem_crt_cipher(code)
+	if res.get("ok", false):
+		_play_sfx("chime")
+		_crt_glitch_timer = 0.9
+		_screen_flash(CYAN, 0.45, 0.45)
+		_spawn_sparks(_uv_to_stage(UV_CRT), CYAN, 32, 240.0, 60.0)
+		_crt_modal.hide()
+		_sync_modal_shade()
+		if str(res.get("code", "")) == "0221":
+			_meta_save["cipher_0221"] = true
+			_save_meta_save()
+		_show_cutin("🔑 " + str(res.get("title", "骇入成功")), str(res.get("msg", "")), CYAN)
+		_lbl_ticker.text = "🔑 " + str(res.get("msg", ""))
+	else:
+		_play_sfx("event")
+		_crt_glitch_timer = 0.5
+		_shake_strength = maxf(_shake_strength, 8.0)
+		_crt_msg.modulate = CRIMSON
+		_crt_msg.text = "> " + str(res.get("error", "ACCESS DENIED"))
+
+
+func _open_forge_modal() -> void:
+	if _forge_panel == null or _legacy_forged_this_loss:
+		return
+	_play_sfx("chime")
+	var advs: Array = _latest.get("advisors", [])
+	var default_name := "%s·绝笔遗诏" % str(advs[0]["name"]) if not advs.is_empty() else "咸阳国师·遗诏"
+	_forge_name_edit.text = default_name.substr(0, 12)
+	_select_forge_choice("legacy_strike")
+	_ending_panel.hide()
+	_forge_panel.show()
+	_sync_modal_shade()
+
+
+func _select_forge_choice(choice_id: String) -> void:
+	_play_sfx("hover")
+	_forge_choice = choice_id
+	for k in _forge_opt_btns.keys():
+		var btn: Button = _forge_opt_btns[k]
+		btn.modulate = Color(1.25, 1.18, 0.95, 1.0) if k == choice_id else Color(0.65, 0.68, 0.72, 0.85)
+
+
+func _confirm_forge_legacy() -> void:
+	var cname := _forge_name_edit.text.strip_edges()
+	if cname == "":
+		cname = "咸阳国师·遗诏"
+	var desc_map := {
+		"legacy_strike": "0费对全体敌方造成 40 伤害，并回复 10 民心",
+		"legacy_morale": "0费回复 30 民心，本回合行动 +1、刷新 +1",
+		"legacy_overclock": "0费令下次攻击伤害 ×2、常规进攻 +1、免费重抽手牌",
+	}
+	_meta_save["legacy_edict"] = {
+		"id": _forge_choice,
+		"name": cname,
+		"desc": desc_map.get(_forge_choice, "先师传世遗诏"),
+	}
+	_save_meta_save()
+	_legacy_forged_this_loss = true
+	_play_sfx("victory")
+	_screen_flash(GOLD, 0.45, 0.45)
+	_spawn_sparks(_uv_to_stage(UV_XIANYANG), GOLD, 36, 250.0, 50.0)
+	_forge_panel.hide()
+	_btn_forge_legacy.disabled = true
+	_btn_forge_legacy.text = "✓ 遗诏已篆刻(下局生效)"
+	_ending_panel.show()
+	_sync_modal_shade()
+	_show_cutin("📜 遗诏已成 · %s" % cname, "下一局开局将自动置入秘技栏（0费可用）！", GOLD)
+
+
+const SYNERGY_GRAPH_DEFS := [
+	{"id": "wolong_jianxiong", "name": "卧龙奸雄", "pairs": [["zhugeliang", "caocao"]], "desc": "每回合首张军事卡免曹操额外代价且伤害 +20"},
+	{"id": "bianfa_shuangbi", "name": "变法双璧", "pairs": [["shangyang", "wanganshi"]], "desc": "解除商鞅 80 民心上限锁，每回合行动点 +1"},
+	{"id": "silu_shuili", "name": "丝路水利", "pairs": [["zhangqian", "libing"]], "desc": "丝路红利提升至 +12/回合，买民生卡本回合秦军战力 +10"},
+	{"id": "bingxian_guanjun", "name": "兵仙冠军", "pairs": [["hanxin", "huoqubing"]], "desc": "韩信每回合突袭升至 40 伤，破城返还 1 次免费常规进攻"},
+	{"id": "wanjia_denghuo", "name": "万家灯火", "any_partner": "tanghe", "desc": "回合结束民心 ≥60 时，自动对最弱前线造成 10 点王道感化伤"},
+	{"id": "silu_danshang", "name": "丝路丹商", "pairs": [["baqing", "zhangqian"]], "desc": "每回合额外 +8 民心且刷新终端永久免费"},
+	{"id": "wushuang_zhanshen", "name": "无双战神", "pairs": [["fuhao", "huoqubing"], ["fuhao", "hanxin"]], "desc": "常规进攻伤害 ×1.4，破招打断时额外反击 20 点伤害"},
+	{"id": "yishi_shouwang", "name": "衣食守望", "pairs": [["huangdaopo", "libing"], ["huangdaopo", "tanghe"]], "desc": "回合开始民心 ≥65 时，额外 +5 民心并补 1 次免费刷新"},
+	{"id": "juedai_shuangjiao", "name": "绝代双骄", "pairs": [["mulan", "huoqubing"], ["mulan", "fuhao"]], "desc": "每次常规进攻命中额外回复 +4 民心"},
+	{"id": "qiankun_xinzheng", "name": "乾坤新政", "pairs": [["wuzetian", "shangyang"], ["wuzetian", "wanganshi"]], "desc": "所有外挂消耗再降 20%，且解除 80 民心上限锁"},
+	{"id": "jinxiu_wenmai", "name": "锦绣文脉", "pairs": [["liqingzhao", "zhugeliang"], ["liqingzhao", "huangdaopo"]], "desc": "终端刷新免费，触发隐藏关额外奖励 +10 民心"},
+	{"id": "hujia_guihan", "name": "胡笳归汉", "pairs": [["caiwenji", "caocao"], ["caiwenji", "zhangqian"]], "desc": "终端刷新免费，每次刷新额外回复 +6 民心"},
+	{"id": "jinguo_bingxian", "name": "巾帼兵仙", "pairs": [["fanlihua", "hanxin"], ["fanlihua", "mulan"]], "desc": "破城立刻返还 1 次免费常规进攻，韩信突袭额外 +15 伤"},
+	{"id": "qianqiu_lantai", "name": "千秋兰台", "pairs": [["banzhao", "liqingzhao"], ["banzhao", "caiwenji"]], "desc": "每回合获赠 1 张【始皇密匣】0费秘策，施放秘策额外 +6 民心"},
+]
+
+
+func _graph_pairs(synergy: Dictionary) -> Array:
+	if not synergy.has("any_partner"):
+		return synergy["pairs"]
+	var pairs := []
+	for advisor in _game_data.advisors:
+		if advisor.id != synergy.any_partner:
+			pairs.append([synergy.any_partner, advisor.id])
+	return pairs
+
+
+func _compute_graph_layout(sz: Vector2) -> void:
+	_graph_node_pos.clear()
+	var c := sz * 0.5
+	var rx_in := minf(sz.x * 0.22, 175.0)
+	var ry_in := minf(sz.y * 0.26, 86.0)
+	var rx_out := minf(sz.x * 0.43, 355.0)
+	var ry_out := minf(sz.y * 0.42, 144.0)
+	var inner_ids := ["zhugeliang", "libing", "zhangqian", "wanganshi", "hanxin", "huoqubing"]
+	var outer_ids := ["caocao", "caiwenji", "banzhao", "liqingzhao", "huangdaopo", "tanghe", "baqing", "wuzetian", "shangyang", "fanlihua", "mulan", "fuhao"]
+	for i in range(inner_ids.size()):
+		var ang := -PI * 0.5 + TAU * (float(i) / float(inner_ids.size()))
+		_graph_node_pos[inner_ids[i]] = c + Vector2(cos(ang) * rx_in, sin(ang) * ry_in)
+	for i in range(outer_ids.size()):
+		var ang := -PI * 0.58 + TAU * (float(i) / float(outer_ids.size()))
+		_graph_node_pos[outer_ids[i]] = c + Vector2(cos(ang) * rx_out, sin(ang) * ry_out)
+
+
+func _on_codex_graph_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		var found := ""
+		for aid in _graph_node_pos.keys():
+			if Vector2(_graph_node_pos[aid]).distance_to(event.position) <= 24.0:
+				found = aid
+				break
+		if found != _graph_hover_id:
+			_graph_hover_id = found
+			if found != "":
+				_play_sfx("hover")
+			_refresh_codex_graph_info()
+			_codex_graph_canvas.queue_redraw()
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		var hit_id := ""
+		for aid in _graph_node_pos.keys():
+			if Vector2(_graph_node_pos[aid]).distance_to(event.position) <= 24.0:
+				hit_id = aid
+				break
+		_play_sfx("click")
+		_graph_pin_id = "" if (hit_id == "" or hit_id == _graph_pin_id) else hit_id
+		_refresh_codex_graph_info()
+		_codex_graph_canvas.queue_redraw()
+
+
+func _refresh_codex_graph_info() -> void:
+	if _codex_graph_title == null:
+		return
+	var focus_id := _graph_pin_id if _graph_pin_id != "" else _graph_hover_id
+	var active_syns: Array = _latest.get("active_synergies", [])
+	var active_syn_ids := {}
+	for s in active_syns:
+		active_syn_ids[s["id"]] = true
+	var adv_map := {}
+	for a in _game_data.get("advisors", []):
+		adv_map[a["id"]] = a
+	if focus_id == "" or not adv_map.has(focus_id):
+		var col_cnt: int = _meta_save.get("summoned", []).size()
+		_codex_graph_title.text = "✦ 玄黑羁绊星盘 · 已收录 %d/18 位名臣 · 本局激活 %d/14 组羁绊" % [col_cnt, active_syns.size()]
+		_codex_graph_desc.text = "悬停或点击星盘上任意名臣头像，即可高亮其全部搭档连线与羁绊效果（点击可锁定查看，金色粗线为本局已激活羁绊）。"
+		return
+	var adv: Dictionary = adv_map[focus_id]
+	var deployed := core.has_advisor(focus_id)
+	var collected: bool = focus_id in _meta_save.get("summoned", [])
+	var tag_txt := ("⚔本局在阵" if deployed else ("★已收录" if collected else "未收录"))
+	_codex_graph_title.text = "【%s】（-%d民心 · %s）  %s" % [adv["name"], int(adv["cost"]), tag_txt, adv["skill"]]
+	var lines := []
+	for sg in SYNERGY_GRAPH_DEFS:
+		var partners := []
+		for pr in _graph_pairs(sg):
+			if pr[0] == focus_id and adv_map.has(pr[1]):
+				partners.append(adv_map[pr[1]]["name"])
+			elif pr[1] == focus_id and adv_map.has(pr[0]):
+				partners.append(adv_map[pr[0]]["name"])
+		if not partners.is_empty():
+			if sg.get("any_partner", "") == focus_id:
+				partners = ["任意其他名臣"]
+			var act_mark := " [★已激活]" if deployed and active_syn_ids.has(sg["id"]) else ""
+			lines.append("✦ 【%s】%s（搭档：%s）→ %s" % [sg["name"], act_mark, " / ".join(partners), sg["desc"]])
+	_codex_graph_desc.text = "\n".join(lines) if not lines.is_empty() else "暂无关联羁绊。"
+
+
+func _draw_codex_graph() -> void:
+	var sz := _codex_graph_canvas.size
+	if sz.x < 40.0 or sz.y < 40.0:
+		return
+	_compute_graph_layout(sz)
+	var c := sz * 0.5
+	var font := theme.default_font
+
+	# 1. 玄黑青铜星盘底纹
+	_codex_graph_canvas.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.025, 0.032, 0.042, 0.96))
+	_codex_graph_canvas.draw_arc(c, minf(sz.x * 0.43, 355.0) * 0.55, 0.0, TAU, 48, Color(GOLD, 0.14), 1.2, true)
+	_codex_graph_canvas.draw_arc(c, minf(sz.y * 0.44, 152.0), 0.0, TAU, 48, Color(CYAN, 0.12), 1.0, true)
+	_codex_graph_canvas.draw_line(Vector2(c.x - 160, c.y), Vector2(c.x + 160, c.y), Color(GOLD, 0.08), 1.0)
+	_codex_graph_canvas.draw_line(Vector2(c.x, c.y - 120), Vector2(c.x, c.y + 120), Color(GOLD, 0.08), 1.0)
+	var ctr_txt := "玄黑星盘"
+	var csz := font.get_string_size(ctr_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
+	_codex_graph_canvas.draw_string(font, c + Vector2(-csz.x * 0.5, 4), ctr_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(GOLD, 0.35))
+
+	var focus_id := _graph_pin_id if _graph_pin_id != "" else _graph_hover_id
+	var active_syn_ids := {}
+	for s in _latest.get("active_synergies", []):
+		active_syn_ids[s["id"]] = true
+	var focus_partners := {}
+
+	# 2. 绘制 14 组羁绊曲线连线
+	var labels_to_draw := []
+	for sg in SYNERGY_GRAPH_DEFS:
+		for pr in _graph_pairs(sg):
+			var is_act: bool = active_syn_ids.has(sg.id) and core.has_advisor(pr[0]) and core.has_advisor(pr[1])
+			var a_id: String = pr[0]
+			var b_id: String = pr[1]
+			if not _graph_node_pos.has(a_id) or not _graph_node_pos.has(b_id):
+				continue
+			var p0: Vector2 = _graph_node_pos[a_id]
+			var p1: Vector2 = _graph_node_pos[b_id]
+			var is_rel := (focus_id != "" and (a_id == focus_id or b_id == focus_id))
+			if is_rel:
+				focus_partners[a_id] = true
+				focus_partners[b_id] = true
+			var mid := (p0 + p1) * 0.5
+			var bend := (mid - c).normalized() * 18.0 if mid.distance_to(c) > 6.0 else Vector2(0, -18.0)
+			var ctrl := mid + bend
+			var col := GOLD if (is_act or is_rel) else CYAN
+			var alpha := 0.92 if is_rel else (0.88 if is_act else (0.07 if focus_id != "" else 0.26))
+			var w := 2.8 if (is_rel or is_act) else 1.3
+			var prev := p0
+			for st in range(1, 13):
+				var t := float(st) / 12.0
+				var q := (1.0 - t) * (1.0 - t) * p0 + 2.0 * (1.0 - t) * t * ctrl + t * t * p1
+				_codex_graph_canvas.draw_line(prev, q, Color(col, alpha), w, true)
+				prev = q
+			if is_rel or is_act:
+				var lp := 0.25 * p0 + 0.5 * ctrl + 0.25 * p1
+				labels_to_draw.append([lp, "【%s】" % sg["name"], GOLD if is_act else CYAN])
+
+	# 3. 绘制 18 位名臣头像星盘节点
+	var sum_list: Array = _meta_save.get("summoned", [])
+	for adv in _game_data.get("advisors", []):
+		var aid: String = adv["id"]
+		if not _graph_node_pos.has(aid):
+			continue
+		var pos: Vector2 = _graph_node_pos[aid]
+		var is_focus := (aid == focus_id)
+		var is_partner := focus_partners.has(aid)
+		var is_dep := core.has_advisor(aid)
+		var is_col := aid in sum_list
+		var dim := (focus_id != "" and not is_focus and not is_partner)
+		var box_s := 44.0 if is_focus else (38.0 if (is_partner or is_dep) else 34.0)
+		var rect := Rect2(pos - Vector2(box_s, box_s) * 0.5, Vector2(box_s, box_s))
+		var border_col := GOLD if (is_focus or is_dep) else (CYAN if is_partner else (Color("#9b8456") if is_col else Color("#4a5258")))
+		if is_focus or is_dep:
+			_codex_graph_canvas.draw_circle(pos, box_s * 0.68, Color(GOLD, 0.22))
+		_codex_graph_canvas.draw_rect(rect.grow(2.5), Color(border_col, 0.35 if dim else 0.95))
+		_codex_graph_canvas.draw_rect(rect, Color(0.04, 0.05, 0.06, 1.0))
+		if not _graph_tex_cache.has(aid) and ResourceLoader.exists(adv.get("portrait", "")):
+			_graph_tex_cache[aid] = load(adv["portrait"])
+		var tex: Texture2D = _graph_tex_cache.get(aid, null)
+		if tex != null:
+			_codex_graph_canvas.draw_texture_rect(tex, rect, false, Color(1, 1, 1, 0.32 if dim else 1.0))
+		if is_col and not dim:
+			_codex_graph_canvas.draw_string(font, rect.position + Vector2(box_s - 10, 10), "★", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, GOLD)
+		var nm: String = adv["name"]
+		var nsz := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
+		var npos := Vector2(pos.x - nsz.x * 0.5, pos.y + box_s * 0.5 + 12.0)
+		var n_alpha := 0.35 if dim else 1.0
+		_codex_graph_canvas.draw_string(font, npos + Vector2(1, 1), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0, 0, 0, n_alpha))
+		_codex_graph_canvas.draw_string(font, npos, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(GOLD if (is_focus or is_dep) else Color("#e4eeee"), n_alpha))
+
+	# 4. 绘制聚焦羁绊名浮动小标签
+	for lb in labels_to_draw:
+		var lp: Vector2 = lb[0]
+		var lt: String = lb[1]
+		var lc: Color = lb[2]
+		var lsz := font.get_string_size(lt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
+		var lrect := Rect2(lp - Vector2(lsz.x * 0.5 + 5, 9), Vector2(lsz.x + 10, 18))
+		_codex_graph_canvas.draw_rect(lrect, Color(0.03, 0.04, 0.06, 0.92))
+		_codex_graph_canvas.draw_rect(lrect, lc, false, 1.2)
+		_codex_graph_canvas.draw_string(font, lp + Vector2(-lsz.x * 0.5, 4), lt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, lc)

@@ -46,6 +46,8 @@ var paradox_phase: bool = false
 var paradox_defeated: bool = false
 var paradox_hit_this_turn: bool = false
 var corrupted_slot: int = -1
+var cipher_0221_used: bool = false
+var cipher_2076_used: bool = false
 var turn: int = 1
 var patience: int = 12
 var morale: int = 60
@@ -111,6 +113,8 @@ func init_game(game_data: Dictionary, lines_data: Dictionary = {}, p_mvp_only: b
 	paradox_defeated = false
 	paradox_hit_this_turn = false
 	corrupted_slot = -1
+	cipher_0221_used = false
+	cipher_2076_used = false
 	if rng_seed >= 0:
 		_rng.seed = rng_seed
 	else:
@@ -379,6 +383,8 @@ func get_snapshot() -> Dictionary:
 		"paradox_phase": paradox_phase,
 		"paradox_defeated": paradox_defeated,
 		"corrupted_slot": corrupted_slot,
+		"cipher_0221_used": cipher_0221_used,
+		"cipher_2076_used": cipher_2076_used,
 		"pact_used": pact_used,
 		"pact_free_hand_turn": pact_free_hand_turn,
 		"game_over_code": game_over_code,
@@ -1316,6 +1322,37 @@ func cast_secret_card(index: int) -> Dictionary:
 			secret_overclock_active = true
 			_roll_terminal(false)
 			_log("★ 释放【乾坤借势】：下次攻击伤害 ×2，终端手牌免费重抽！")
+		"secret_cipher_key":
+			corrupted_slot = -1
+			if paradox_phase and not paradox_defeated:
+				var pc := _find_region("paradox_core")
+				if not pc.is_empty():
+					pc["phase2_triggered"] = true
+					_log("🔑 释放隐藏神卡【传国密钥·破壁】：直接粉碎 2076 终端锁血护盾并净化手牌污染！")
+					_apply_damage("paradox_core", 90, false, "传国密钥·破壁")
+			else:
+				_log("🔑 释放隐藏神卡【传国密钥·破壁】：全图 45 点无视护甲穿刺打击！")
+				for r_ck in _unconquered_regions():
+					_apply_damage(r_ck["id"], 45, false, "传国密钥·破壁")
+					if game_over_code != "":
+						break
+		"legacy_strike":
+			_log("📜 启用先师遗诏【%s】：全图 40 伤并回复 10 民心！" % card["name"])
+			_modify_morale(10, "先师遗诏·破阵遗锋", false)
+			for r_ls in _unconquered_regions():
+				_apply_damage(r_ls["id"], 40, false, card["name"])
+				if game_over_code != "":
+					break
+		"legacy_morale":
+			_modify_morale(30, "先师遗诏·万民遗泽", false)
+			actions_left += 1
+			refreshes_left = mini(3, refreshes_left + 1)
+			_log("📜 启用先师遗诏【%s】：民心 +30，行动 +1，刷新 +1！" % card["name"])
+		"legacy_overclock":
+			secret_overclock_active = true
+			attack_left += 1
+			_roll_terminal(false)
+			_log("📜 启用先师遗诏【%s】：下次攻击伤害 ×2，常规进攻 +1，手牌免费重抽！" % card["name"])
 	if has_synergy("qianqiu_lantai"):
 		_modify_morale(6, "千秋兰台", false)
 	_emit_state()
@@ -1358,3 +1395,42 @@ func make_emperor_pact(choice: String) -> Dictionary:
 			return {"ok": false, "error": "未知密匣契约"}
 	_emit_state()
 	return {"ok": true}
+
+
+func redeem_crt_cipher(code: String) -> Dictionary:
+	if game_over_code != "":
+		return {"ok": false, "error": "本局已结束，无法执行终端指令"}
+	var c := code.strip_edges()
+	if c == "0221":
+		if cipher_0221_used:
+			return {"ok": false, "error": "本局已激活过 0221 始皇元年权限"}
+		cipher_0221_used = true
+		var key_card := {
+			"id": "secret_cipher_key",
+			"name": "传国密钥·破壁",
+			"desc": "0费全图45伤；终幕直接击穿焚书核心锁血护盾并造成90重创+净化污染",
+		}
+		secret_cards.append(key_card)
+		_log("🔑 骇入 2076 终端成功（秘钥 0221）！获赠隐藏 0 费神卡【传国密钥·破壁】！")
+		secret_card_gained.emit(key_card)
+		_emit_state()
+		return {"ok": true, "code": "0221", "title": "骇入成功 · 0221 始皇元年权限", "msg": "已解锁隐藏 0 费神卡【传国密钥·破壁】！终幕可直接粉碎核心锁血护盾！"}
+	elif c == "2076":
+		if cipher_2076_used:
+			return {"ok": false, "error": "本局已领取过 2076 未来纪元补给"}
+		cipher_2076_used = true
+		_modify_morale(15, "2076底层补给", false)
+		refreshes_left = mini(3, refreshes_left + 1)
+		_grant_secret_card("2076纪元密令")
+		_log("⚡ 彩蛋秘钥 2076 生效！民心 +15，刷新 +1，获赠 1 张国师秘技！")
+		_emit_state()
+		return {"ok": true, "code": "2076", "title": "彩蛋权限 · 2076 未来纪元", "msg": "民心 +15 · 刷新 +1 · 获赠 1 张 0 费国师秘技！"}
+	return {"ok": false, "error": "ACCESS DENIED // 秘钥错误（线索藏于左侧青铜鼎铭文与藏经阁咸阳宫碑文）"}
+
+
+func inject_legacy_card(card: Dictionary) -> void:
+	if card.is_empty() or not card.has("id"):
+		return
+	secret_cards.append(card.duplicate(true))
+	_log("📜 继承上局先师遗志：【%s】已置入秘技栏（0费可用一次）！" % str(card.get("name", "先师遗诏")))
+	_emit_state()
