@@ -183,12 +183,23 @@ var _codex_tab_cheat: Button
 var _codex_tab_lands: Button
 var _codex_tab_graph: Button
 var _codex_graph_wrap: VBoxContainer
-var _codex_graph_canvas: Control
-var _codex_graph_title: Label
-var _codex_graph_desc: Label
-var _graph_hover_id: String = ""
-var _graph_pin_id: String = ""
-var _graph_node_pos: Dictionary = {}
+var _codex_syn_filter: String = "all"
+var _codex_syn_filter_btns: Dictionary = {}
+var _codex_syn_view: String = "cards"
+var _codex_syn_view_btn: Button
+var _codex_syn_filter_bar: HBoxContainer
+var _codex_syn_scroll: ScrollContainer
+var _codex_syn_grid: GridContainer
+var _codex_star_wrap: VBoxContainer
+var _codex_star_canvas: Control
+var _codex_star_title: Label
+var _codex_star_desc: Label
+var _codex_star_cheat_box: VBoxContainer
+var _codex_star_cheat_pic: TextureRect
+var _codex_star_cheat_lbl: Label
+var _star_hover_id: String = ""
+var _star_pin_id: String = ""
+var _star_node_pos: Dictionary = {}
 var _graph_tex_cache: Dictionary = {}
 var _codex_mode: String = "advisors"
 var _modal_shade: ColorRect
@@ -967,7 +978,7 @@ func _build_stage_and_ui() -> void:
 	c_box.add_child(c_hdr)
 	_label(c_hdr, "咸阳藏经阁", 22, GOLD).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_codex_tab_adv = _button(c_hdr, "👑 名臣(18)", func(): _play_sfx("click"); _codex_mode = "advisors"; _populate_codex(), GOLD)
-	_codex_tab_graph = _button(c_hdr, "🕸 羁绊图谱(14)", func(): _play_sfx("click"); _codex_mode = "graph"; _populate_codex(), CYAN)
+	_codex_tab_graph = _button(c_hdr, "🕸 羁绊图谱(20)", func(): _play_sfx("click"); _codex_mode = "graph"; _populate_codex(), CYAN)
 	_codex_tab_cheat = _button(c_hdr, "⚡ 外挂(12)", func(): _play_sfx("click"); _codex_mode = "cheats"; _populate_codex(), CYAN)
 	_codex_tab_lands = _button(c_hdr, "🏛 舆图(7)", func(): _play_sfx("click"); _codex_mode = "landmarks"; _populate_codex(), GOLD)
 	_button(c_hdr, "关闭 (C)", _toggle_codex, MUTED)
@@ -988,24 +999,86 @@ func _build_stage_and_ui() -> void:
 	_codex_graph_wrap.hide()
 	c_box.add_child(_codex_graph_wrap)
 
-	_codex_graph_canvas = Control.new()
-	_codex_graph_canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_codex_graph_canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_codex_graph_canvas.mouse_filter = Control.MOUSE_FILTER_STOP
-	_codex_graph_canvas.draw.connect(_draw_codex_graph)
-	_codex_graph_canvas.gui_input.connect(_on_codex_graph_input)
-	_codex_graph_wrap.add_child(_codex_graph_canvas)
+	var top_ctrl := HBoxContainer.new()
+	top_ctrl.add_theme_constant_override("separation", 8)
+	_codex_graph_wrap.add_child(top_ctrl)
+	_codex_syn_filter_bar = HBoxContainer.new()
+	_codex_syn_filter_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_codex_syn_filter_bar.add_theme_constant_override("separation", 8)
+	top_ctrl.add_child(_codex_syn_filter_bar)
+	var f_bar := _codex_syn_filter_bar
+	for fspec in [
+		["all", "全部 (20)", GOLD],
+		["combat", "⚔ 战力", CRIMSON],
+		["morale", "🌿 民心", SAGE],
+		["tech", "⚡ 刷牌", CYAN],
+		["cheat", "⚡ 外挂联动(6)", VIOLET],
+		["ready", "★ 可凑", GOLD],
+	]:
+		var fid: String = fspec[0]
+		var fb := _button(f_bar, fspec[1], func(): _play_sfx("click"); _codex_syn_filter = fid; _populate_synergy_atlas(), fspec[2])
+		_codex_syn_filter_btns[fid] = fb
 
-	var g_info := PanelContainer.new()
-	g_info.custom_minimum_size = Vector2(0, 86)
-	g_info.add_theme_stylebox_override("panel", _flat_style(Color(0.04, 0.055, 0.075, 0.94), GOLD, 10, 8))
-	_codex_graph_wrap.add_child(g_info)
-	var giv := VBoxContainer.new()
-	giv.add_theme_constant_override("separation", 4)
-	g_info.add_child(giv)
-	_codex_graph_title = _label(giv, "", 14, GOLD)
-	_codex_graph_desc = _label(giv, "", 12, Color("#dff0f2"))
-	_codex_graph_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_codex_syn_scroll = ScrollContainer.new()
+	_codex_syn_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_codex_syn_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_codex_graph_wrap.add_child(_codex_syn_scroll)
+	_codex_syn_grid = GridContainer.new()
+	_codex_syn_grid.columns = 2
+	_codex_syn_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_codex_syn_grid.add_theme_constant_override("h_separation", 12)
+	_codex_syn_grid.add_theme_constant_override("v_separation", 12)
+	_codex_syn_scroll.add_child(_codex_syn_grid)
+
+	_codex_syn_view_btn = _button(top_ctrl, "🕸 切换星盘图谱", func():
+		_play_sfx("click")
+		_codex_syn_view = "star" if _codex_syn_view == "cards" else "cards"
+		_populate_synergy_atlas()
+	, GOLD)
+
+	_codex_star_wrap = VBoxContainer.new()
+	_codex_star_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_codex_star_wrap.add_theme_constant_override("separation", 8)
+	_codex_star_wrap.hide()
+	_codex_graph_wrap.add_child(_codex_star_wrap)
+
+	_codex_star_canvas = Control.new()
+	_codex_star_canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_codex_star_canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_codex_star_canvas.mouse_filter = Control.MOUSE_FILTER_STOP
+	_codex_star_canvas.draw.connect(_draw_star_graph)
+	_codex_star_canvas.gui_input.connect(_on_star_graph_input)
+	_codex_star_wrap.add_child(_codex_star_canvas)
+
+	var s_info := PanelContainer.new()
+	s_info.custom_minimum_size = Vector2(0, 88)
+	s_info.add_theme_stylebox_override("panel", _flat_style(Color(0.04, 0.055, 0.075, 0.95), GOLD, 10, 8))
+	_codex_star_wrap.add_child(s_info)
+	var sih := HBoxContainer.new()
+	sih.add_theme_constant_override("separation", 12)
+	s_info.add_child(sih)
+	var siv := VBoxContainer.new()
+	siv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	siv.add_theme_constant_override("separation", 4)
+	sih.add_child(siv)
+	_codex_star_title = _label(siv, "", 14, GOLD)
+	_codex_star_desc = _label(siv, "", 12, Color("#e4f4f5"))
+	_codex_star_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_codex_star_cheat_box = VBoxContainer.new()
+	_codex_star_cheat_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	_codex_star_cheat_box.add_theme_constant_override("separation", 2)
+	_codex_star_cheat_box.hide()
+	sih.add_child(_codex_star_cheat_box)
+	var c_fr := PanelContainer.new()
+	c_fr.add_theme_stylebox_override("panel", _flat_style(Color(0.04, 0.06, 0.09, 1.0), VIOLET, 2, 4))
+	_codex_star_cheat_box.add_child(c_fr)
+	_codex_star_cheat_pic = TextureRect.new()
+	_codex_star_cheat_pic.custom_minimum_size = Vector2(52, 52)
+	_codex_star_cheat_pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_codex_star_cheat_pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	c_fr.add_child(_codex_star_cheat_pic)
+	_codex_star_cheat_lbl = _label(_codex_star_cheat_box, "", 11, VIOLET)
+	_codex_star_cheat_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
 	# 13. 电影感开场主屏幕布
 	_title_curtain = Control.new()
@@ -1111,8 +1184,7 @@ func _populate_codex() -> void:
 	if _codex_mode == "graph":
 		_codex_scroll.hide()
 		_codex_graph_wrap.show()
-		_refresh_codex_graph_info()
-		_codex_graph_canvas.queue_redraw()
+		_populate_synergy_atlas()
 		return
 	_codex_graph_wrap.hide()
 	_codex_scroll.show()
@@ -3139,79 +3211,301 @@ func _confirm_forge_legacy() -> void:
 
 
 const SYNERGY_GRAPH_DEFS := [
-	{"id": "wolong_jianxiong", "name": "卧龙奸雄", "pairs": [["zhugeliang", "caocao"]], "desc": "每回合首张军事卡免曹操额外代价且伤害 +20"},
-	{"id": "bianfa_shuangbi", "name": "变法双璧", "pairs": [["shangyang", "wanganshi"]], "desc": "解除商鞅 80 民心上限锁，每回合行动点 +1"},
-	{"id": "silu_shuili", "name": "丝路水利", "pairs": [["zhangqian", "libing"]], "desc": "丝路红利提升至 +12/回合，买民生卡本回合秦军战力 +10"},
-	{"id": "bingxian_guanjun", "name": "兵仙冠军", "pairs": [["hanxin", "huoqubing"]], "desc": "韩信每回合突袭升至 40 伤，破城返还 1 次免费常规进攻"},
-	{"id": "wanjia_denghuo", "name": "万家灯火", "any_partner": "tanghe", "desc": "回合结束民心 ≥60 时，自动对最弱前线造成 10 点王道感化伤"},
-	{"id": "silu_danshang", "name": "丝路丹商", "pairs": [["baqing", "zhangqian"]], "desc": "每回合额外 +8 民心且刷新终端永久免费"},
-	{"id": "wushuang_zhanshen", "name": "无双战神", "pairs": [["fuhao", "huoqubing"], ["fuhao", "hanxin"]], "desc": "常规进攻伤害 ×1.4，破招打断时额外反击 20 点伤害"},
-	{"id": "yishi_shouwang", "name": "衣食守望", "pairs": [["huangdaopo", "libing"], ["huangdaopo", "tanghe"]], "desc": "回合开始民心 ≥65 时，额外 +5 民心并补 1 次免费刷新"},
-	{"id": "juedai_shuangjiao", "name": "绝代双骄", "pairs": [["mulan", "huoqubing"], ["mulan", "fuhao"]], "desc": "每次常规进攻命中额外回复 +4 民心"},
-	{"id": "qiankun_xinzheng", "name": "乾坤新政", "pairs": [["wuzetian", "shangyang"], ["wuzetian", "wanganshi"]], "desc": "所有外挂消耗再降 20%，且解除 80 民心上限锁"},
-	{"id": "jinxiu_wenmai", "name": "锦绣文脉", "pairs": [["liqingzhao", "zhugeliang"], ["liqingzhao", "huangdaopo"]], "desc": "终端刷新免费，触发隐藏关额外奖励 +10 民心"},
-	{"id": "hujia_guihan", "name": "胡笳归汉", "pairs": [["caiwenji", "caocao"], ["caiwenji", "zhangqian"]], "desc": "终端刷新免费，每次刷新额外回复 +6 民心"},
-	{"id": "jinguo_bingxian", "name": "巾帼兵仙", "pairs": [["fanlihua", "hanxin"], ["fanlihua", "mulan"]], "desc": "破城立刻返还 1 次免费常规进攻，韩信突袭额外 +15 伤"},
-	{"id": "qianqiu_lantai", "name": "千秋兰台", "pairs": [["banzhao", "liqingzhao"], ["banzhao", "caiwenji"]], "desc": "每回合获赠 1 张【始皇密匣】0费秘策，施放秘策额外 +6 民心"},
+	{"id": "wolong_jianxiong", "name": "卧龙奸雄", "cat": "combat", "core": "zhugeliang", "partners": ["caocao"], "desc": "每回合首张军事卡免曹操额外代价且伤害 +20"},
+	{"id": "bianfa_shuangbi", "name": "变法双璧", "cat": "tech", "core": "shangyang", "partners": ["wanganshi"], "desc": "解除商鞅 80 民心上限锁，每回合行动点 +1"},
+	{"id": "silu_shuili", "name": "丝路水利", "cat": "morale", "core": "zhangqian", "partners": ["libing"], "desc": "丝路红利提升至 +12/回合，买民生卡本回合秦军战力 +10"},
+	{"id": "bingxian_guanjun", "name": "兵仙冠军", "cat": "combat", "core": "hanxin", "partners": ["huoqubing"], "desc": "韩信每回合突袭升至 40 伤，破城返还 1 次免费常规进攻"},
+	{"id": "wanjia_denghuo", "name": "万家灯火", "cat": "morale", "core": "tanghe", "any_partner": true, "desc": "回合结束民心 ≥60 时，自动对最弱前线造成 10 点王道感化伤"},
+	{"id": "silu_danshang", "name": "丝路丹商", "cat": "morale", "core": "baqing", "partners": ["zhangqian"], "desc": "每回合额外 +8 民心且刷新终端永久免费"},
+	{"id": "wushuang_zhanshen", "name": "无双战神", "cat": "combat", "core": "fuhao", "partners": ["huoqubing", "hanxin"], "desc": "常规进攻伤害 ×1.4，破招打断时额外反击 20 点伤害"},
+	{"id": "yishi_shouwang", "name": "衣食守望", "cat": "morale", "core": "huangdaopo", "partners": ["libing", "tanghe"], "desc": "回合开始民心 ≥65 时，额外 +5 民心并补 1 次免费刷新"},
+	{"id": "juedai_shuangjiao", "name": "绝代双骄", "cat": "combat", "core": "mulan", "partners": ["huoqubing", "fuhao"], "desc": "每次常规进攻命中额外回复 +4 民心"},
+	{"id": "qiankun_xinzheng", "name": "乾坤新政", "cat": "tech", "core": "wuzetian", "partners": ["shangyang", "wanganshi"], "desc": "所有外挂消耗再降 20%，且解除 80 民心上限锁"},
+	{"id": "jinxiu_wenmai", "name": "锦绣文脉", "cat": "tech", "core": "liqingzhao", "partners": ["zhugeliang", "huangdaopo"], "desc": "终端刷新免费，触发隐藏关额外奖励 +10 民心"},
+	{"id": "hujia_guihan", "name": "胡笳归汉", "cat": "tech", "core": "caiwenji", "partners": ["caocao", "zhangqian"], "desc": "终端刷新免费，每次刷新额外回复 +6 民心"},
+	{"id": "jinguo_bingxian", "name": "巾帼兵仙", "cat": "combat", "core": "fanlihua", "partners": ["hanxin", "mulan"], "desc": "破城立刻返还 1 次免费常规进攻，韩信突袭额外 +15 伤"},
+	{"id": "qianqiu_lantai", "name": "千秋兰台", "cat": "tech", "core": "banzhao", "partners": ["liqingzhao", "caiwenji"], "desc": "每回合获赠 1 张【始皇密匣】0费秘策，施放秘策额外 +6 民心"},
 ]
 
 
-func _graph_pairs(synergy: Dictionary) -> Array:
-	if not synergy.has("any_partner"):
-		return synergy["pairs"]
-	var pairs := []
+const CHEAT_COMBO_DEFS := [
+	{"id": "combo_huoqubing_drone", "name": "封狼蜂群", "adv": "huoqubing", "cheat": "drone", "desc": "霍去病坐镇时，【无人机蜂群】直接秒杀任意常规板块（无视剩余血量）！"},
+	{"id": "combo_liqingzhao_edu", "name": "文心兴学", "adv": "liqingzhao", "cheat": "education", "desc": "李清照坐镇时，买【义务教育】不封锁常规进攻，且额外再回复 +15 民心！"},
+	{"id": "combo_caocao_mil", "name": "枭雄重火", "adv": "caocao", "cheat": "ak47", "desc": "曹操坐镇时，所有军事外挂（含 AK-47 兵马俑/卫星重炮）战力全部翻倍！"},
+	{"id": "combo_libing_live", "name": "天府丰穰", "adv": "libing", "cheat": "rice", "desc": "李冰坐镇时，所有民生科技（杂交水稻/青霉素/水泥直道等）回复民心翻倍！"},
+	{"id": "combo_huangdaopo_live", "name": "巧织济世", "adv": "huangdaopo", "cheat": "penicillin", "desc": "黄道婆坐镇时，所有民生科技额外 +10 民心，且买卡本回合常规秦军战力 +8！"},
+	{"id": "combo_zhugeliang_mil", "name": "卧龙节流", "adv": "zhugeliang", "cheat": "artillery", "desc": "诸葛亮坐镇时，所有军事外挂（含卫星制导重炮/无人机蜂群）民心消耗减半！"},
+]
+
+
+func _get_cheat_tex(ch_d: Dictionary) -> Texture2D:
+	var cid: String = "cheat_" + str(ch_d["id"])
+	if not _graph_tex_cache.has(cid) and ResourceLoader.exists(ch_d.get("art", "")):
+		_graph_tex_cache[cid] = load(ch_d["art"])
+	return _graph_tex_cache.get(cid, null)
+
+
+func _make_mini_cheat_chip(ch_d: Dictionary) -> VBoxContainer:
+	var vb := VBoxContainer.new()
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 3)
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _flat_style(Color(0.05, 0.04, 0.08, 1.0), VIOLET, 2, 4))
+	vb.add_child(frame)
+	var tr := TextureRect.new()
+	tr.custom_minimum_size = Vector2(52, 52)
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	tr.texture = _get_cheat_tex(ch_d)
+	frame.add_child(tr)
+	var nm := _label(vb, ch_d["name"], 12, VIOLET)
+	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.tooltip_text = "【%s】%s" % [ch_d["name"], ch_d["desc"]]
+	return vb
+
+
+func _get_adv_tex(adv: Dictionary) -> Texture2D:
+	var aid: String = adv["id"]
+	if not _graph_tex_cache.has(aid) and ResourceLoader.exists(adv.get("portrait", "")):
+		_graph_tex_cache[aid] = load(adv["portrait"])
+	return _graph_tex_cache.get(aid, null)
+
+
+func _make_mini_portrait_chip(adv: Dictionary, deployed: bool, collected: bool) -> VBoxContainer:
+	var vb := VBoxContainer.new()
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 3)
+	var frame := PanelContainer.new()
+	var bcol := GOLD if deployed else (Color("#8f7848") if collected else Color("#4a5860"))
+	frame.add_theme_stylebox_override("panel", _flat_style(Color(0.04, 0.05, 0.07, 1.0), bcol, 2, 4))
+	vb.add_child(frame)
+	var tr := TextureRect.new()
+	tr.custom_minimum_size = Vector2(52, 52)
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	tr.texture = _get_adv_tex(adv)
+	frame.add_child(tr)
+	var nm := _label(vb, adv["name"], 12, GOLD if deployed else Color("#e6f0f0"))
+	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.tooltip_text = "【%s】（-%d民心）%s" % [adv["name"], int(adv["cost"]), adv["skill"]]
+	return vb
+
+
+func _atlas_partners(sg: Dictionary) -> Array:
+	if not sg.get("any_partner", false):
+		return sg["partners"]
+	var ids := []
 	for advisor in _game_data.advisors:
-		if advisor.id != synergy.any_partner:
-			pairs.append([synergy.any_partner, advisor.id])
-	return pairs
+		if advisor.id != sg.core:
+			ids.append(advisor.id)
+	return ids
 
 
-func _compute_graph_layout(sz: Vector2) -> void:
-	_graph_node_pos.clear()
+func _populate_synergy_atlas() -> void:
+	var is_star := (_codex_syn_view == "star")
+	_codex_syn_view_btn.text = "🗂 切换卡片视图" if is_star else "🕸 切换星盘图谱"
+	_codex_syn_filter_bar.visible = not is_star
+	_codex_syn_scroll.visible = not is_star
+	_codex_star_wrap.visible = is_star
+	if is_star:
+		_refresh_star_graph_info()
+		_codex_star_canvas.queue_redraw()
+		return
+	_codex_syn_scroll.scroll_vertical = 0
+	for ch in _codex_syn_grid.get_children():
+		_codex_syn_grid.remove_child(ch)
+		ch.queue_free()
+	for k in _codex_syn_filter_btns.keys():
+		var fb: Button = _codex_syn_filter_btns[k]
+		fb.modulate = Color(1.2, 1.15, 0.95, 1.0) if k == _codex_syn_filter else Color(0.62, 0.66, 0.70, 0.85)
+
+	var adv_map := {}
+	for a in _game_data.get("advisors", []):
+		adv_map[a["id"]] = a
+	var active_syn_ids := {}
+	for s in _latest.get("active_synergies", []):
+		active_syn_ids[s["id"]] = true
+	var sum_list: Array = _meta_save.get("summoned", [])
+
+	# 智能排序：本局已激活(2) > 差1人可凑(1) > 其余(0)
+	var items := []
+	for sg in SYNERGY_GRAPH_DEFS:
+		var is_act := active_syn_ids.has(sg["id"])
+		var has_core := core.has_advisor(sg["core"])
+		var has_part := false
+		for pid in _atlas_partners(sg):
+			if core.has_advisor(pid):
+				has_part = true
+		var near := (not is_act) and (has_core or has_part)
+		if _codex_syn_filter == "ready" and not (is_act or near):
+			continue
+		if _codex_syn_filter == "cheat":
+			continue
+		if _codex_syn_filter in ["combat", "morale", "tech"] and sg["cat"] != _codex_syn_filter:
+			continue
+		var prio := 2 if is_act else (1 if near else 0)
+		items.append({"sg": sg, "act": is_act, "near": near, "prio": prio})
+	items.sort_custom(func(a, b): return int(a["prio"]) > int(b["prio"]))
+
+	var cheat_map := {}
+	for ch_d in _game_data.get("cheats", []):
+		cheat_map[ch_d["id"]] = ch_d
+	var cheat_items := []
+	if _codex_syn_filter in ["all", "cheat", "ready"]:
+		for cc in CHEAT_COMBO_DEFS:
+			var dep_c := core.has_advisor(cc["adv"])
+			if _codex_syn_filter == "ready" and not dep_c:
+				continue
+			cheat_items.append({"cc": cc, "dep": dep_c})
+	cheat_items.sort_custom(func(a, b): return int(a["dep"]) > int(b["dep"]))
+
+	if items.is_empty() and cheat_items.is_empty():
+		var empty_lbl := _label(_codex_syn_grid, "当前阵容暂无可凑搭配，点击「全部 (20)」查看配队指南。", 14, MUTED)
+		empty_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		return
+
+	var cat_info := {
+		"combat": ["⚔ 战力破阵", CRIMSON],
+		"morale": ["🌿 民心经营", SAGE],
+		"tech": ["⚡ 刷牌秘技", CYAN],
+	}
+
+	for it in items:
+		var sg: Dictionary = it["sg"]
+		var is_act: bool = it["act"]
+		var near: bool = it["near"]
+		var c_meta: Array = cat_info.get(sg["cat"], ["✦ 羁绊", GOLD])
+		var border_c: Color = GOLD if is_act else (CYAN if near else Color("#4a4232"))
+		var bg_c: Color = Color(0.11, 0.085, 0.035, 0.96) if is_act else (Color(0.04, 0.075, 0.095, 0.95) if near else Color(0.045, 0.052, 0.065, 0.94))
+
+		var card := PanelContainer.new()
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		card.add_theme_stylebox_override("panel", _flat_style(bg_c, border_c, 12, 8))
+		_codex_syn_grid.add_child(card)
+
+		var vb := VBoxContainer.new()
+		vb.add_theme_constant_override("separation", 8)
+		card.add_child(vb)
+
+		# 顶栏：羁绊名 + 流派 + 状态标签
+		var hdr := HBoxContainer.new()
+		hdr.add_theme_constant_override("separation", 8)
+		vb.add_child(hdr)
+		var ttl := _label(hdr, "✦ 【%s】" % sg["name"], 16, GOLD if is_act else Color("#f4e8c8"))
+		ttl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_label(hdr, c_meta[0], 11, c_meta[1])
+		var st_txt := "★ 已激活" if is_act else ("⚡ 差1人可凑" if near else "未激活")
+		var st_col := GOLD if is_act else (CYAN if near else MUTED)
+		_label(hdr, st_txt, 12, st_col)
+
+		# 中栏：清晰大图头像连线展示（核心名臣 ━━✦━━ 搭档名臣）
+		var pair_row := HBoxContainer.new()
+		pair_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		pair_row.add_theme_constant_override("separation", 10)
+		vb.add_child(pair_row)
+		var core_id: String = sg["core"]
+		if adv_map.has(core_id):
+			pair_row.add_child(_make_mini_portrait_chip(adv_map[core_id], core.has_advisor(core_id), core_id in sum_list))
+		var link_lbl := _label(pair_row, "━━ ✦ ━━", 13, GOLD if is_act else CYAN)
+		link_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		var partners: Array = _atlas_partners(sg)
+		if sg.get("any_partner", false):
+			var deployed_partners := partners.filter(func(id): return core.has_advisor(id))
+			if deployed_partners.is_empty():
+				_label(pair_row, "任意其他名臣", 12, MUTED)
+			partners = deployed_partners
+		for pi in range(partners.size()):
+			if pi > 0:
+				var or_lbl := _label(pair_row, "或", 12, MUTED)
+				or_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			var pid: String = partners[pi]
+			if adv_map.has(pid):
+				pair_row.add_child(_make_mini_portrait_chip(adv_map[pid], core.has_advisor(pid), pid in sum_list))
+
+		# 底栏：高对比度效果说明
+		var desc_lbl := _label(vb, sg["desc"], 12, Color("#e4f2f2"))
+		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+	# 追加 6 组「名臣 × 跨时空外挂」专属联动卡片
+	for cit in cheat_items:
+		var cc: Dictionary = cit["cc"]
+		var dep_c: bool = cit["dep"]
+		var card := PanelContainer.new()
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var c_bg := Color(0.08, 0.045, 0.12, 0.96) if dep_c else Color(0.05, 0.045, 0.075, 0.94)
+		var c_bc := VIOLET if dep_c else Color("#5e487a")
+		card.add_theme_stylebox_override("panel", _flat_style(c_bg, c_bc, 12, 8))
+		_codex_syn_grid.add_child(card)
+		var vb := VBoxContainer.new()
+		vb.add_theme_constant_override("separation", 8)
+		card.add_child(vb)
+		var hdr := HBoxContainer.new()
+		hdr.add_theme_constant_override("separation", 8)
+		vb.add_child(hdr)
+		var ttl := _label(hdr, "⚡ 【%s】" % cc["name"], 16, VIOLET if dep_c else Color("#e6d4ff"))
+		ttl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_label(hdr, "名臣×外挂", 11, CYAN)
+		_label(hdr, "★ 已就绪" if dep_c else "专属联动", 12, GOLD if dep_c else MUTED)
+		var pair_row := HBoxContainer.new()
+		pair_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		pair_row.add_theme_constant_override("separation", 14)
+		vb.add_child(pair_row)
+		if adv_map.has(cc["adv"]):
+			pair_row.add_child(_make_mini_portrait_chip(adv_map[cc["adv"]], dep_c, cc["adv"] in sum_list))
+		var lk := _label(pair_row, "━━ ⚡ ━━", 13, VIOLET if dep_c else CYAN)
+		lk.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		if cheat_map.has(cc["cheat"]):
+			pair_row.add_child(_make_mini_cheat_chip(cheat_map[cc["cheat"]]))
+		var dl := _label(vb, cc["desc"], 12, Color("#ebe8f8"))
+		dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+
+func _compute_star_layout(sz: Vector2) -> void:
+	_star_node_pos.clear()
 	var c := sz * 0.5
-	var rx_in := minf(sz.x * 0.22, 175.0)
-	var ry_in := minf(sz.y * 0.26, 86.0)
+	var rx_in := minf(sz.x * 0.22, 178.0)
+	var ry_in := minf(sz.y * 0.25, 82.0)
 	var rx_out := minf(sz.x * 0.43, 355.0)
-	var ry_out := minf(sz.y * 0.42, 144.0)
+	var ry_out := minf(sz.y * 0.41, 136.0)
 	var inner_ids := ["zhugeliang", "libing", "zhangqian", "wanganshi", "hanxin", "huoqubing"]
 	var outer_ids := ["caocao", "caiwenji", "banzhao", "liqingzhao", "huangdaopo", "tanghe", "baqing", "wuzetian", "shangyang", "fanlihua", "mulan", "fuhao"]
 	for i in range(inner_ids.size()):
 		var ang := -PI * 0.5 + TAU * (float(i) / float(inner_ids.size()))
-		_graph_node_pos[inner_ids[i]] = c + Vector2(cos(ang) * rx_in, sin(ang) * ry_in)
+		_star_node_pos[inner_ids[i]] = c + Vector2(cos(ang) * rx_in, sin(ang) * ry_in)
 	for i in range(outer_ids.size()):
 		var ang := -PI * 0.58 + TAU * (float(i) / float(outer_ids.size()))
-		_graph_node_pos[outer_ids[i]] = c + Vector2(cos(ang) * rx_out, sin(ang) * ry_out)
+		_star_node_pos[outer_ids[i]] = c + Vector2(cos(ang) * rx_out, sin(ang) * ry_out)
 
 
-func _on_codex_graph_input(event: InputEvent) -> void:
+func _on_star_graph_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var found := ""
-		for aid in _graph_node_pos.keys():
-			if Vector2(_graph_node_pos[aid]).distance_to(event.position) <= 24.0:
+		for aid in _star_node_pos.keys():
+			if Vector2(_star_node_pos[aid]).distance_to(event.position) <= 26.0:
 				found = aid
 				break
-		if found != _graph_hover_id:
-			_graph_hover_id = found
+		if found != _star_hover_id:
+			_star_hover_id = found
 			if found != "":
 				_play_sfx("hover")
-			_refresh_codex_graph_info()
-			_codex_graph_canvas.queue_redraw()
+			_refresh_star_graph_info()
+			_codex_star_canvas.queue_redraw()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		var hit_id := ""
-		for aid in _graph_node_pos.keys():
-			if Vector2(_graph_node_pos[aid]).distance_to(event.position) <= 24.0:
+		for aid in _star_node_pos.keys():
+			if Vector2(_star_node_pos[aid]).distance_to(event.position) <= 26.0:
 				hit_id = aid
 				break
 		_play_sfx("click")
-		_graph_pin_id = "" if (hit_id == "" or hit_id == _graph_pin_id) else hit_id
-		_refresh_codex_graph_info()
-		_codex_graph_canvas.queue_redraw()
+		_star_pin_id = "" if (hit_id == "" or hit_id == _star_pin_id) else hit_id
+		_refresh_star_graph_info()
+		_codex_star_canvas.queue_redraw()
 
 
-func _refresh_codex_graph_info() -> void:
-	if _codex_graph_title == null:
+func _refresh_star_graph_info() -> void:
+	if _codex_star_title == null:
 		return
-	var focus_id := _graph_pin_id if _graph_pin_id != "" else _graph_hover_id
+	var focus_id := _star_pin_id if _star_pin_id != "" else _star_hover_id
 	var active_syns: Array = _latest.get("active_synergies", [])
 	var active_syn_ids := {}
 	for s in active_syns:
@@ -3219,68 +3513,78 @@ func _refresh_codex_graph_info() -> void:
 	var adv_map := {}
 	for a in _game_data.get("advisors", []):
 		adv_map[a["id"]] = a
+	if _codex_star_cheat_box != null:
+		_codex_star_cheat_box.hide()
 	if focus_id == "" or not adv_map.has(focus_id):
 		var col_cnt: int = _meta_save.get("summoned", []).size()
-		_codex_graph_title.text = "✦ 玄黑羁绊星盘 · 已收录 %d/18 位名臣 · 本局激活 %d/14 组羁绊" % [col_cnt, active_syns.size()]
-		_codex_graph_desc.text = "悬停或点击星盘上任意名臣头像，即可高亮其全部搭档连线与羁绊效果（点击可锁定查看，金色粗线为本局已激活羁绊）。"
+		_codex_star_title.text = "✦ 玄黑羁绊星盘 · 已收录 %d/18 位名臣 · 本局激活 %d/14 组羁绊" % [col_cnt, active_syns.size()]
+		_codex_star_desc.text = "悬停或点击任意名臣头像，清晰高亮其搭档光丝并在下方查看完整羁绊与绝配外挂（右上可随时切回两列卡片视图）。"
 		return
 	var adv: Dictionary = adv_map[focus_id]
 	var deployed := core.has_advisor(focus_id)
 	var collected: bool = focus_id in _meta_save.get("summoned", [])
 	var tag_txt := ("⚔本局在阵" if deployed else ("★已收录" if collected else "未收录"))
-	_codex_graph_title.text = "【%s】（-%d民心 · %s）  %s" % [adv["name"], int(adv["cost"]), tag_txt, adv["skill"]]
+	_codex_star_title.text = "【%s】（-%d民心 · %s）  %s" % [adv["name"], int(adv["cost"]), tag_txt, adv["skill"]]
 	var lines := []
 	for sg in SYNERGY_GRAPH_DEFS:
 		var partners := []
-		for pr in _graph_pairs(sg):
-			if pr[0] == focus_id and adv_map.has(pr[1]):
-				partners.append(adv_map[pr[1]]["name"])
-			elif pr[1] == focus_id and adv_map.has(pr[0]):
-				partners.append(adv_map[pr[0]]["name"])
+		if sg["core"] == focus_id:
+			for pid in _atlas_partners(sg):
+				if adv_map.has(pid):
+					partners.append(adv_map[pid]["name"])
+		elif focus_id in _atlas_partners(sg) and adv_map.has(sg["core"]):
+			partners.append(adv_map[sg["core"]]["name"])
 		if not partners.is_empty():
-			if sg.get("any_partner", "") == focus_id:
+			if sg.get("any_partner", false) and focus_id == sg.core:
 				partners = ["任意其他名臣"]
 			var act_mark := " [★已激活]" if deployed and active_syn_ids.has(sg["id"]) else ""
 			lines.append("✦ 【%s】%s（搭档：%s）→ %s" % [sg["name"], act_mark, " / ".join(partners), sg["desc"]])
-	_codex_graph_desc.text = "\n".join(lines) if not lines.is_empty() else "暂无关联羁绊。"
+	for cc in CHEAT_COMBO_DEFS:
+		if cc["adv"] == focus_id:
+			lines.append("⚡ 绝配外挂【%s】→ %s" % [cc["name"], cc["desc"]])
+			if _codex_star_cheat_box != null:
+				for ch_d in _game_data.get("cheats", []):
+					if ch_d["id"] == cc["cheat"]:
+						_codex_star_cheat_pic.texture = _get_cheat_tex(ch_d)
+						_codex_star_cheat_lbl.text = "⚡ " + ch_d["name"]
+						_codex_star_cheat_box.show()
+						break
+	_codex_star_desc.text = "\n".join(lines) if not lines.is_empty() else "暂无关联羁绊。"
 
 
-func _draw_codex_graph() -> void:
-	var sz := _codex_graph_canvas.size
+func _draw_star_graph() -> void:
+	var sz := _codex_star_canvas.size
 	if sz.x < 40.0 or sz.y < 40.0:
 		return
-	_compute_graph_layout(sz)
+	_compute_star_layout(sz)
 	var c := sz * 0.5
 	var font := theme.default_font
 
-	# 1. 玄黑青铜星盘底纹
-	_codex_graph_canvas.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.025, 0.032, 0.042, 0.96))
-	_codex_graph_canvas.draw_arc(c, minf(sz.x * 0.43, 355.0) * 0.55, 0.0, TAU, 48, Color(GOLD, 0.14), 1.2, true)
-	_codex_graph_canvas.draw_arc(c, minf(sz.y * 0.44, 152.0), 0.0, TAU, 48, Color(CYAN, 0.12), 1.0, true)
-	_codex_graph_canvas.draw_line(Vector2(c.x - 160, c.y), Vector2(c.x + 160, c.y), Color(GOLD, 0.08), 1.0)
-	_codex_graph_canvas.draw_line(Vector2(c.x, c.y - 120), Vector2(c.x, c.y + 120), Color(GOLD, 0.08), 1.0)
+	_codex_star_canvas.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.025, 0.032, 0.044, 0.96))
+	_codex_star_canvas.draw_arc(c, minf(sz.x * 0.43, 355.0) * 0.55, 0.0, TAU, 48, Color(GOLD, 0.16), 1.2, true)
+	_codex_star_canvas.draw_arc(c, minf(sz.y * 0.43, 142.0), 0.0, TAU, 48, Color(CYAN, 0.13), 1.0, true)
+	_codex_star_canvas.draw_line(Vector2(c.x - 160, c.y), Vector2(c.x + 160, c.y), Color(GOLD, 0.08), 1.0)
+	_codex_star_canvas.draw_line(Vector2(c.x, c.y - 110), Vector2(c.x, c.y + 110), Color(GOLD, 0.08), 1.0)
 	var ctr_txt := "玄黑星盘"
 	var csz := font.get_string_size(ctr_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
-	_codex_graph_canvas.draw_string(font, c + Vector2(-csz.x * 0.5, 4), ctr_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(GOLD, 0.35))
+	_codex_star_canvas.draw_string(font, c + Vector2(-csz.x * 0.5, 4), ctr_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(GOLD, 0.40))
 
-	var focus_id := _graph_pin_id if _graph_pin_id != "" else _graph_hover_id
+	var focus_id := _star_pin_id if _star_pin_id != "" else _star_hover_id
 	var active_syn_ids := {}
 	for s in _latest.get("active_synergies", []):
 		active_syn_ids[s["id"]] = true
 	var focus_partners := {}
 
-	# 2. 绘制 14 组羁绊曲线连线
-	var labels_to_draw := []
+	# 仅绘制干净发光弧线，不在画布上叠放遮挡头像的浮标（羁绊详情全部清晰呈现在下方卡片）
 	for sg in SYNERGY_GRAPH_DEFS:
-		for pr in _graph_pairs(sg):
-			var is_act: bool = active_syn_ids.has(sg.id) and core.has_advisor(pr[0]) and core.has_advisor(pr[1])
-			var a_id: String = pr[0]
-			var b_id: String = pr[1]
-			if not _graph_node_pos.has(a_id) or not _graph_node_pos.has(b_id):
+		var a_id: String = sg["core"]
+		for b_id in _atlas_partners(sg):
+			var is_act: bool = active_syn_ids.has(sg.id) and core.has_advisor(a_id) and core.has_advisor(b_id)
+			if not _star_node_pos.has(a_id) or not _star_node_pos.has(b_id):
 				continue
-			var p0: Vector2 = _graph_node_pos[a_id]
-			var p1: Vector2 = _graph_node_pos[b_id]
-			var is_rel := (focus_id != "" and (a_id == focus_id or b_id == focus_id))
+			var p0: Vector2 = _star_node_pos[a_id]
+			var p1: Vector2 = _star_node_pos[b_id]
+			var is_rel: bool = focus_id != "" and (a_id == focus_id or b_id == focus_id)
 			if is_rel:
 				focus_partners[a_id] = true
 				focus_partners[b_id] = true
@@ -3288,58 +3592,42 @@ func _draw_codex_graph() -> void:
 			var bend := (mid - c).normalized() * 18.0 if mid.distance_to(c) > 6.0 else Vector2(0, -18.0)
 			var ctrl := mid + bend
 			var col := GOLD if (is_act or is_rel) else CYAN
-			var alpha := 0.92 if is_rel else (0.88 if is_act else (0.07 if focus_id != "" else 0.26))
-			var w := 2.8 if (is_rel or is_act) else 1.3
+			var alpha := 0.94 if is_rel else (0.90 if is_act else (0.10 if focus_id != "" else 0.30))
+			var w := 3.0 if (is_rel or is_act) else 1.4
 			var prev := p0
 			for st in range(1, 13):
 				var t := float(st) / 12.0
 				var q := (1.0 - t) * (1.0 - t) * p0 + 2.0 * (1.0 - t) * t * ctrl + t * t * p1
-				_codex_graph_canvas.draw_line(prev, q, Color(col, alpha), w, true)
+				_codex_star_canvas.draw_line(prev, q, Color(col, alpha), w, true)
 				prev = q
-			if is_rel or is_act:
-				var lp := 0.25 * p0 + 0.5 * ctrl + 0.25 * p1
-				labels_to_draw.append([lp, "【%s】" % sg["name"], GOLD if is_act else CYAN])
 
-	# 3. 绘制 18 位名臣头像星盘节点
+	# 高亮清晰的 18 位名臣头像节点（未聚焦也保持清晰可读）
 	var sum_list: Array = _meta_save.get("summoned", [])
 	for adv in _game_data.get("advisors", []):
 		var aid: String = adv["id"]
-		if not _graph_node_pos.has(aid):
+		if not _star_node_pos.has(aid):
 			continue
-		var pos: Vector2 = _graph_node_pos[aid]
+		var pos: Vector2 = _star_node_pos[aid]
 		var is_focus := (aid == focus_id)
 		var is_partner := focus_partners.has(aid)
 		var is_dep := core.has_advisor(aid)
 		var is_col := aid in sum_list
 		var dim := (focus_id != "" and not is_focus and not is_partner)
-		var box_s := 44.0 if is_focus else (38.0 if (is_partner or is_dep) else 34.0)
+		var box_s := 48.0 if is_focus else (42.0 if (is_partner or is_dep) else 38.0)
 		var rect := Rect2(pos - Vector2(box_s, box_s) * 0.5, Vector2(box_s, box_s))
-		var border_col := GOLD if (is_focus or is_dep) else (CYAN if is_partner else (Color("#9b8456") if is_col else Color("#4a5258")))
+		var border_col := GOLD if (is_focus or is_dep) else (CYAN if is_partner else (Color("#b5985f") if is_col else Color("#6a7680")))
 		if is_focus or is_dep:
-			_codex_graph_canvas.draw_circle(pos, box_s * 0.68, Color(GOLD, 0.22))
-		_codex_graph_canvas.draw_rect(rect.grow(2.5), Color(border_col, 0.35 if dim else 0.95))
-		_codex_graph_canvas.draw_rect(rect, Color(0.04, 0.05, 0.06, 1.0))
-		if not _graph_tex_cache.has(aid) and ResourceLoader.exists(adv.get("portrait", "")):
-			_graph_tex_cache[aid] = load(adv["portrait"])
-		var tex: Texture2D = _graph_tex_cache.get(aid, null)
+			_codex_star_canvas.draw_circle(pos, box_s * 0.72, Color(GOLD, 0.26))
+		_codex_star_canvas.draw_rect(rect.grow(2.5), Color(border_col, 0.58 if dim else 1.0))
+		_codex_star_canvas.draw_rect(rect, Color(0.04, 0.05, 0.06, 1.0))
+		var tex := _get_adv_tex(adv)
 		if tex != null:
-			_codex_graph_canvas.draw_texture_rect(tex, rect, false, Color(1, 1, 1, 0.32 if dim else 1.0))
-		if is_col and not dim:
-			_codex_graph_canvas.draw_string(font, rect.position + Vector2(box_s - 10, 10), "★", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, GOLD)
+			_codex_star_canvas.draw_texture_rect(tex, rect, false, Color(1, 1, 1, 0.62 if dim else 1.0))
+		if is_col:
+			_codex_star_canvas.draw_string(font, rect.position + Vector2(box_s - 10, 10), "★", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(GOLD, 0.65 if dim else 1.0))
 		var nm: String = adv["name"]
 		var nsz := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
 		var npos := Vector2(pos.x - nsz.x * 0.5, pos.y + box_s * 0.5 + 12.0)
-		var n_alpha := 0.35 if dim else 1.0
-		_codex_graph_canvas.draw_string(font, npos + Vector2(1, 1), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0, 0, 0, n_alpha))
-		_codex_graph_canvas.draw_string(font, npos, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(GOLD if (is_focus or is_dep) else Color("#e4eeee"), n_alpha))
-
-	# 4. 绘制聚焦羁绊名浮动小标签
-	for lb in labels_to_draw:
-		var lp: Vector2 = lb[0]
-		var lt: String = lb[1]
-		var lc: Color = lb[2]
-		var lsz := font.get_string_size(lt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
-		var lrect := Rect2(lp - Vector2(lsz.x * 0.5 + 5, 9), Vector2(lsz.x + 10, 18))
-		_codex_graph_canvas.draw_rect(lrect, Color(0.03, 0.04, 0.06, 0.92))
-		_codex_graph_canvas.draw_rect(lrect, lc, false, 1.2)
-		_codex_graph_canvas.draw_string(font, lp + Vector2(-lsz.x * 0.5, 4), lt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, lc)
+		var n_alpha := 0.62 if dim else 1.0
+		_codex_star_canvas.draw_string(font, npos + Vector2(1, 1), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0, 0, 0, n_alpha))
+		_codex_star_canvas.draw_string(font, npos, nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(GOLD if (is_focus or is_dep) else (CYAN if is_partner else Color("#ecf4f5")), n_alpha))
