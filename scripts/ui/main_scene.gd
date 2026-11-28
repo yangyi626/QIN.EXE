@@ -142,6 +142,7 @@ var _lbl_conquest: Label
 var _lbl_patience: Label
 var _buffs_box: HBoxContainer
 var _threat_label: Label
+var _opening_preview: Label
 var _lbl_ticker: Label
 var _btn_refresh: Button
 var _btn_fleet: Button
@@ -668,6 +669,9 @@ func _build_stage_and_ui() -> void:
 	bot_left.add_child(tick_box)
 	_lbl_ticker = _label(tick_box, "", 12, Color("#dde8e8"))
 	_lbl_ticker.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_opening_preview = _label(tick_box, "", 13, GOLD)
+	_opening_preview.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_opening_preview.hide()
 
 	# 11. 三幕过场电影横幅
 	_act_banner = PanelContainer.new()
@@ -1650,6 +1654,11 @@ func _draw_stage_fx() -> void:
 	var cap_hov := (_hovered_region == "xianyang" or _selected == "xianyang")
 	_stage_fx.draw_circle(cap, (16.0 if cap_hov else 12.0) + 2.0 * sin(_anim_time * 3.0), Color(GOLD, 0.26 if cap_hov else 0.18))
 	_draw_mini_landmark(cap, "xianyang", GOLD)
+	if _latest.get("yongchang_lantern_lit", false):
+		var fort := _uv_to_stage(Vector2(0.688, 0.629))
+		_stage_fx.draw_circle(fort, 10.0 + 2.0 * sin(_anim_time * 2.5), Color(GOLD, 0.28))
+		_stage_fx.draw_circle(fort, 4.0, GOLD)
+		_stage_fx.draw_string(theme.default_font, fort + Vector2(9, 4), "永昌堡", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, GOLD)
 	if cap_hov:
 		var ct := "大秦 · 咸阳宫"
 		var csz := theme.default_font.get_string_size(ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 13)
@@ -2413,6 +2422,7 @@ func _refresh_buff_pills(snap: Dictionary) -> void:
 
 
 func _rebuild_hand_cards(animate_deal: bool = false) -> void:
+	_clear_opening_preview()
 	_drag_active = false
 	_drag_slot = -1
 	for n in _card_nodes:
@@ -2422,7 +2432,9 @@ func _rebuild_hand_cards(animate_deal: bool = false) -> void:
 
 	_btn_cancel_aim.visible = _pending_cheat_slot >= 0
 	_btn_refresh.text = "刷新终端 %d/3 (−%d)" % [_latest.refreshes_left, core.get_refresh_cost()]
-	_btn_refresh.disabled = _latest.refreshes_left <= 0 or _latest.overheat_no_refresh
+	if _latest.yongchang_free_refresh:
+		_btn_refresh.text = "守堡赠礼 · 免费刷新一次"
+	_btn_refresh.disabled = (_latest.refreshes_left <= 0 and not _latest.yongchang_free_refresh) or _latest.overheat_no_refresh
 	_btn_fleet.text = "渡海航线已通" if _latest.sea_unlocked else "强征造楼船 (−%d)" % core.get_fleet_cost()
 	_btn_fleet.disabled = _latest.sea_unlocked or _latest.actions_left <= 0
 	var pact_done: bool = bool(_latest.get("pact_used", false))
@@ -2626,6 +2638,7 @@ func _create_tactile_card(slot: int) -> Control:
 	hit.pressed.connect(_use_card.bind(slot))
 	hit.mouse_entered.connect(func():
 		if not disabled and slot < _card_base_pos.size():
+			_show_opening_preview(data)
 			_play_sfx("hover")
 			root.z_index = 20
 			var tw := root.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
@@ -2634,6 +2647,7 @@ func _create_tactile_card(slot: int) -> Control:
 			tw.parallel().tween_property(root, "scale", Vector2(1.07, 1.07), 0.14)
 	)
 	hit.mouse_exited.connect(func():
+		_clear_opening_preview()
 		if slot != _pending_cheat_slot and slot < _card_base_pos.size():
 			root.z_index = slot
 			var tw := root.create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
@@ -2643,6 +2657,31 @@ func _create_tactile_card(slot: int) -> Control:
 	)
 	root.add_child(hit)
 	return root
+
+
+func _clear_opening_preview() -> void:
+	_opening_preview.hide()
+	_lbl_ticker.show()
+
+
+func _show_opening_preview(data: Dictionary) -> void:
+	if not _latest.tactical_mode or not _latest.free_hook_available or _modal_shade.visible or _title_curtain.visible:
+		return
+	if data.id == "shangyang":
+		_opening_preview.text = "任用商鞅 · 秦军战力 %d → %d，民心上限 %d → %d。" % [core.get_conventional_power(), core.get_conventional_power(true), core.get_morale_cap(), core.get_morale_cap(true)]
+	elif data.id == "drone":
+		var steppe := core._find_region("steppe")
+		if steppe.is_empty() or steppe.conquered:
+			_opening_preview.text = "出动蜂群 · 选择未占领战区，立即打击守军。"
+		else:
+			var hp := int(steppe.hp)
+			var threat: Dictionary = _latest.active_threat
+			var interrupt: bool = threat.get("region_id", "") == "steppe" and not bool(threat.get("interrupted", false))
+			_opening_preview.text = "若打北方草原 · 守军 %d → %d%s。" % [hp, maxi(0, hp - _card_damage(data, hp)), "，打断敌军意图" if interrupt else ""]
+	else:
+		return
+	_opening_preview.show()
+	_lbl_ticker.hide()
 
 
 func _card_damage(data: Dictionary, hp: int) -> int:
@@ -3280,7 +3319,7 @@ const SYNERGY_GRAPH_DEFS := [
 	{"id": "silu_shuili", "name": "丝路水利", "cat": "morale", "core": "zhangqian", "partners": ["libing"], "desc": "丝路红利提升至 +12/回合，买民生卡本回合秦军战力 +10"},
 	{"id": "bingxian_guanjun", "name": "兵仙冠军", "cat": "combat", "core": "hanxin", "partners": ["huoqubing"], "desc": "韩信每回合突袭升至 40 伤，破城返还 1 次免费常规进攻"},
 	{"id": "wanjia_denghuo", "name": "万家灯火", "cat": "morale", "core": "tanghe", "any_partner": true, "desc": "回合结束民心 ≥60 时，自动对最弱前线造成 10 点王道感化伤"},
-	{"id": "silu_danshang", "name": "丝路丹商", "cat": "morale", "core": "baqing", "partners": ["zhangqian"], "desc": "每回合额外 +8 民心且刷新终端永久免费"},
+	{"id": "silu_danshang", "name": "丝路丹商", "cat": "morale", "core": "baqing", "partners": ["zhangqian"], "desc": "每回合额外 +5 民心且刷新终端永久免费"},
 	{"id": "wushuang_zhanshen", "name": "无双战神", "cat": "combat", "core": "fuhao", "partners": ["huoqubing", "hanxin"], "desc": "常规进攻伤害 ×1.4，破招打断时额外反击 20 点伤害"},
 	{"id": "yishi_shouwang", "name": "衣食守望", "cat": "morale", "core": "huangdaopo", "partners": ["libing", "tanghe"], "desc": "回合开始民心 ≥65 时，额外 +5 民心并补 1 次免费刷新"},
 	{"id": "juedai_shuangjiao", "name": "绝代双骄", "cat": "combat", "core": "mulan", "partners": ["huoqubing", "fuhao"], "desc": "每次常规进攻命中额外回复 +4 民心"},
@@ -3288,7 +3327,7 @@ const SYNERGY_GRAPH_DEFS := [
 	{"id": "jinxiu_wenmai", "name": "锦绣文脉", "cat": "tech", "core": "liqingzhao", "partners": ["zhugeliang", "huangdaopo"], "desc": "终端刷新免费，触发隐藏关额外奖励 +10 民心"},
 	{"id": "hujia_guihan", "name": "胡笳归汉", "cat": "tech", "core": "caiwenji", "partners": ["caocao", "zhangqian"], "desc": "终端刷新免费，每次刷新额外回复 +6 民心"},
 	{"id": "jinguo_bingxian", "name": "巾帼兵仙", "cat": "combat", "core": "fanlihua", "partners": ["hanxin", "mulan"], "desc": "破城立刻返还 1 次免费常规进攻，韩信突袭额外 +15 伤"},
-	{"id": "qianqiu_lantai", "name": "千秋兰台", "cat": "tech", "core": "banzhao", "partners": ["liqingzhao", "caiwenji"], "desc": "每回合获赠 1 张【始皇密匣】0费秘策，施放秘策额外 +6 民心"},
+	{"id": "qianqiu_lantai", "name": "千秋兰台", "cat": "tech", "core": "banzhao", "partners": ["liqingzhao", "caiwenji"], "desc": "偶数回合获赠 1 张【始皇密匣】0费秘策，施放秘策额外 +6 民心"},
 ]
 
 

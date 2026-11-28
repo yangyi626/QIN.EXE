@@ -48,6 +48,10 @@ var paradox_hit_this_turn: bool = false
 var corrupted_slot: int = -1
 var cipher_0221_used: bool = false
 var cipher_2076_used: bool = false
+var yongchang_triggered: bool = false
+var yongchang_pending_choice: String = ""
+var yongchang_lantern_lit: bool = false
+var yongchang_free_refresh := false
 var turn: int = 1
 var patience: int = 12
 var morale: int = 60
@@ -115,6 +119,10 @@ func init_game(game_data: Dictionary, lines_data: Dictionary = {}, p_mvp_only: b
 	corrupted_slot = -1
 	cipher_0221_used = false
 	cipher_2076_used = false
+	yongchang_triggered = false
+	yongchang_pending_choice = ""
+	yongchang_lantern_lit = false
+	yongchang_free_refresh = false
 	if rng_seed >= 0:
 		_rng.seed = rng_seed
 	else:
@@ -196,7 +204,7 @@ func get_active_synergies() -> Array[Dictionary]:
 	if has_advisor("tanghe"):
 		list.append({"id": "wanjia_denghuo", "name": "万家灯火", "desc": "回合结束民心>=60时，对最弱前线造成10点王道感化伤害"})
 	if has_advisor("baqing") and has_advisor("zhangqian"):
-		list.append({"id": "silu_danshang", "name": "丝路丹商", "desc": "每回合额外+8民心，且终端刷新完全免费"})
+		list.append({"id": "silu_danshang", "name": "丝路丹商", "desc": "每回合额外+5民心，且终端刷新完全免费"})
 	if has_advisor("fuhao") and (has_advisor("huoqubing") or has_advisor("hanxin")):
 		list.append({"id": "wushuang_zhanshen", "name": "无双战神", "desc": "常规进攻伤害×1.4，破招打断时额外反击20点伤害"})
 	if has_advisor("huangdaopo") and (has_advisor("libing") or has_advisor("tanghe")):
@@ -212,7 +220,7 @@ func get_active_synergies() -> Array[Dictionary]:
 	if has_advisor("fanlihua") and (has_advisor("hanxin") or has_advisor("mulan")):
 		list.append({"id": "jinguo_bingxian", "name": "巾帼兵仙", "desc": "破城立刻返还1次免费常规进攻，韩信突袭额外+15伤"})
 	if has_advisor("banzhao") and (has_advisor("liqingzhao") or has_advisor("caiwenji")):
-		list.append({"id": "qianqiu_lantai", "name": "千秋兰台", "desc": "每回合获赠1张【始皇密匣】0费秘策，施放秘策额外+6民心"})
+		list.append({"id": "qianqiu_lantai", "name": "千秋兰台", "desc": "偶数回合获赠1张【始皇密匣】0费秘策，施放秘策额外+6民心"})
 	return list
 
 
@@ -240,8 +248,8 @@ func get_region_weakness_info(region_id: String) -> Dictionary:
 	return {"label": "无特殊弱点", "key": ""}
 
 
-func get_morale_cap() -> int:
-	var base_cap := 80 if (has_advisor("shangyang") and not has_synergy("bianfa_shuangbi") and not has_synergy("qiankun_xinzheng")) else 100
+func get_morale_cap(with_shangyang: bool = false) -> int:
+	var base_cap := 80 if ((with_shangyang or has_advisor("shangyang")) and not has_synergy("bianfa_shuangbi") and not has_synergy("qiankun_xinzheng")) else 100
 	return maxi(30, base_cap - pact_morale_cap_penalty)
 
 
@@ -264,9 +272,9 @@ func get_act() -> int:
 	return 3
 
 
-func get_conventional_power() -> int:
+func get_conventional_power(with_shangyang: bool = false) -> int:
 	var base := 20 + cement_road_bonus + ak47_bonus + perm_decree_power_bonus + temp_power_bonus - overheat_power_debuff
-	if has_advisor("shangyang"):
+	if with_shangyang or has_advisor("shangyang"):
 		base *= 2
 	return maxi(0, base)
 
@@ -316,6 +324,8 @@ func get_fleet_cost() -> int:
 
 
 func get_refresh_cost() -> int:
+	if yongchang_free_refresh:
+		return 0
 	return 0 if (has_advisor("wanganshi") or has_synergy("silu_danshang") or has_synergy("jinxiu_wenmai") or has_synergy("hujia_guihan")) else 5
 
 
@@ -385,6 +395,8 @@ func get_snapshot() -> Dictionary:
 		"corrupted_slot": corrupted_slot,
 		"cipher_0221_used": cipher_0221_used,
 		"cipher_2076_used": cipher_2076_used,
+		"yongchang_lantern_lit": yongchang_lantern_lit,
+		"yongchang_free_refresh": yongchang_free_refresh,
 		"pact_used": pact_used,
 		"pact_free_hand_turn": pact_free_hand_turn,
 		"game_over_code": game_over_code,
@@ -452,11 +464,14 @@ func refresh_terminal() -> Dictionary:
 		return {"ok": false, "error": "当前状态不可刷新"}
 	if overheat_no_refresh:
 		return {"ok": false, "error": "终端降频运行中，本回合无法刷新"}
-	if refreshes_left <= 0:
+	if refreshes_left <= 0 and not yongchang_free_refresh:
 		return {"ok": false, "error": "本回合刷新次数已用完"}
 
 	var cost := get_refresh_cost()
-	refreshes_left -= 1
+	if yongchang_free_refresh:
+		yongchang_free_refresh = false
+	else:
+		refreshes_left -= 1
 	if cost > 0:
 		_modify_morale(-cost, "刷新终端", false)
 	if game_over_code == "":
@@ -722,6 +737,20 @@ func end_turn() -> Dictionary:
 				_emit_state()
 				return {"ok": true}
 
+	if tactical_mode and not paradox_phase and not yongchang_triggered and get_act() >= 2 and patience > 1:
+		yongchang_triggered = true
+		pending_event = {
+			"id": "yongchang_fortress",
+			"title": "永昌堡守望 · 跨时空海防档案",
+			"desc": "咸阳终端重现明代温州永昌堡的守备档案。始皇要征用堡中粮械远征，汤和的全息影像却指向城中仍待守护的百姓。国师如何定夺？",
+			"art": "res://assets/landmarks/xianyang.jpg",
+			"option_a": {"label": "征调粮械：下回合行动、进攻各 +1，战力 +10；再下回合民心 −12"},
+			"option_b": {"label": "留守点灯：下回合民心 +16，额外免费刷新一次；汤和在阵再 +5"},
+		}
+		event_triggered.emit(pending_event)
+		_emit_state()
+		return {"ok": true, "event": pending_event}
+
 	if turn % 3 == 0 and patience > 1:
 		var evs: Array = _data.get("events", [])
 		if not evs.is_empty():
@@ -738,8 +767,20 @@ func end_turn() -> Dictionary:
 func resolve_event(choice: String) -> Dictionary:
 	if pending_event.is_empty():
 		return {"ok": false, "error": "当前没有待处理事件"}
+	if choice not in ["A", "B"]:
+		return {"ok": false, "error": "无效的事件选项"}
 	var ev := pending_event
 	pending_event = {}
+	if str(ev.get("id", "")) == "yongchang_fortress":
+		if choice == "A":
+			yongchang_pending_choice = "requisition_now"
+			_log("⚔ 征调永昌堡物资远征：下回合获得 行动+1、进攻+1、战力+10，但沿海守备将告急！")
+		else:
+			yongchang_pending_choice = "guard_now"
+			_log("🏮 留守永昌堡·护民守望：将物资留予堡民，静待下回合东南堡灯点亮！")
+		_advance_to_next_turn()
+		_emit_state()
+		return {"ok": true}
 	var loss := 5 if has_advisor("tanghe") else 10
 
 	if choice == "A":
@@ -809,6 +850,7 @@ func _advance_to_next_turn() -> void:
 	next_turn_action_penalty = 0
 	attack_left = 2 if has_advisor("mulan") else 1
 	refreshes_left = 0 if overheat_no_refresh else 3
+	yongchang_free_refresh = false
 	penicillin_turn = false
 	education_turn = false
 	free_hook_available = false
@@ -819,16 +861,37 @@ func _advance_to_next_turn() -> void:
 	secret_overclock_active = false
 
 	# v2.1 固定回合开始结算顺序：1.丝路 -> 2.贷款 -> 3.韩信 -> 4.刷新终端
+	if yongchang_pending_choice == "requisition_now":
+		yongchang_pending_choice = "requisition_payback"
+		actions_left += 1
+		attack_left += 1
+		temp_power_bonus += 10
+		_log("⚔ 永昌堡征调物资抵达：本回合行动 +1、常规进攻 +1、战力 +10！")
+	elif yongchang_pending_choice == "requisition_payback":
+		yongchang_pending_choice = ""
+		_modify_morale(-12, "永昌堡守备告急", false)
+		_log("⚠ 东南海防急报：永昌堡守备空虚、百姓流离，民心 -12！")
+		if game_over_code != "":
+			return
+	elif yongchang_pending_choice == "guard_now":
+		yongchang_pending_choice = ""
+		yongchang_lantern_lit = true
+		_modify_morale(16, "永昌堡灯火守望", false)
+		yongchang_free_refresh = true
+		if has_advisor("tanghe"):
+			_modify_morale(5, "汤和筑城信俗共鸣", false)
+			advisor_spoke.emit("tanghe", "汤和", "永昌堡灯火长明，正是老臣筑城护民之愿！")
+		_log("🏮 永昌堡灯火长明！东南海疆安泰，民心 +16，免费刷新 +1！")
 	if has_advisor("baqing"):
 		_modify_morale(5, "巴清丹穴矿脉", false)
 	if has_advisor("liqingzhao"):
 		_modify_morale(4, "李清照易安文心", false)
 	if tactical_mode and has_synergy("silu_danshang"):
-		_modify_morale(8, "丝路丹商共鸣", false)
+		_modify_morale(5, "丝路丹商共鸣", false)
 	if tactical_mode and has_synergy("yishi_shouwang") and morale >= 65:
 		_modify_morale(5, "衣食守望", false)
 		refreshes_left = mini(3, refreshes_left + 1)
-	if tactical_mode and has_synergy("qianqiu_lantai"):
+	if tactical_mode and has_synergy("qianqiu_lantai") and (turn % 2 == 0):
 		_grant_secret_card("千秋兰台")
 	var west := _find_region("west")
 	if not west.is_empty() and west["conquered"]:
@@ -899,17 +962,25 @@ func _roll_terminal(is_first_turn: bool) -> void:
 
 	var picked: Array[Dictionary] = []
 	if is_first_turn:
-		for i in range(pool.size()):
-			if pool[i]["kind"] == "cheat" and pool[i]["data"]["id"] == "drone":
-				picked.append(pool.pop_at(i))
-				break
-		var adv_indices: Array[int] = []
-		for i in range(pool.size()):
-			if pool[i]["kind"] == "advisor":
-				adv_indices.append(i)
-		if not adv_indices.is_empty():
-			var idx: int = adv_indices[_rng.randi_range(0, adv_indices.size() - 1)]
-			picked.append(pool.pop_at(idx))
+		if tactical_mode:
+			# 深度模式首回合精心编排：【商鞅】vs【无人机蜂群】+【民生卡】，开局 5 秒直面核心策略抉择
+			for target_spec in [["advisor", "shangyang"], ["cheat", "drone"], ["cheat", "rice"]]:
+				for i in range(pool.size()):
+					if pool[i]["kind"] == target_spec[0] and pool[i]["data"]["id"] == target_spec[1]:
+						picked.append(pool.pop_at(i))
+						break
+		else:
+			for i in range(pool.size()):
+				if pool[i]["kind"] == "cheat" and pool[i]["data"]["id"] == "drone":
+					picked.append(pool.pop_at(i))
+					break
+			var adv_indices: Array[int] = []
+			for i in range(pool.size()):
+				if pool[i]["kind"] == "advisor":
+					adv_indices.append(i)
+			if not adv_indices.is_empty():
+				var idx: int = adv_indices[_rng.randi_range(0, adv_indices.size() - 1)]
+				picked.append(pool.pop_at(idx))
 
 	while picked.size() < 3 and not pool.is_empty():
 		var idx := _rng.randi_range(0, pool.size() - 1)
@@ -1142,6 +1213,11 @@ func _roll_threat() -> void:
 		{"type": "sabotage", "title": "截断粮道", "desc": "回合结束未打断：下回合行动 -1"},
 	]
 	var pick: Dictionary = types[_rng.randi_range(0, types.size() - 1)]
+	if turn == 1:
+		var st := _find_region("steppe")
+		if not st.is_empty() and not st["conquered"]:
+			target = st
+			pick = types[0]
 	active_threat = {
 		"region_id": target["id"],
 		"region_name": target["name"],
