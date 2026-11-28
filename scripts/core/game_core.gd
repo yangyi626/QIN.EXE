@@ -820,7 +820,7 @@ func _advance_to_next_turn() -> void:
 
 	# v2.1 固定回合开始结算顺序：1.丝路 -> 2.贷款 -> 3.韩信 -> 4.刷新终端
 	if has_advisor("baqing"):
-		_modify_morale(6, "巴清丹穴矿脉", false)
+		_modify_morale(5, "巴清丹穴矿脉", false)
 	if has_advisor("liqingzhao"):
 		_modify_morale(4, "李清照易安文心", false)
 	if tactical_mode and has_synergy("silu_danshang"):
@@ -949,8 +949,8 @@ func _apply_damage(region_id: String, raw_damage: int, instant_kill: bool, sourc
 		dmg += 20
 		_log("⚔【无双战神】破招追击！对【%s】追加 20 点伤害。" % r["name"])
 	if interrupts and dmg < old_hp and has_advisor("fanlihua"):
-		dmg += 25
-		_log("⚔【樊梨花·奇门破阵】对【%s】追加 25 点穿甲伤害。" % r["name"])
+		dmg += 18
+		_log("⚔【樊梨花·奇门破阵】对【%s】追加 18 点穿甲伤害。" % r["name"])
 	var lock_hp := int(r.get("boss_lock_hp", 0))
 	var phase2_just_triggered := false
 	if tactical_mode and lock_hp > 0 and not bool(r.get("phase2_triggered", false)) and (old_hp - dmg <= lock_hp):
@@ -969,7 +969,7 @@ func _apply_damage(region_id: String, raw_damage: int, instant_kill: bool, sourc
 		if has_advisor("fuhao"):
 			_modify_morale(6, "妇好凯旋", false)
 		if has_advisor("fanlihua"):
-			_modify_morale(10, "樊梨花凯旋", false)
+			_modify_morale(8, "樊梨花凯旋", false)
 	if interrupts:
 		active_threat["interrupted"] = true
 		_modify_morale(5, "破招打断敌军意图", false)

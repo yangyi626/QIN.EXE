@@ -207,7 +207,7 @@
       "cost": 15,
       "mvp": false,
       "portrait": "res://assets/portraits/baqing.jpg",
-      "skill": "丹穴财阀：每回合开始自动+6民心，且强征造楼船消耗减半"
+      "skill": "丹穴财阀：每回合开始自动+5民心，且强征造楼船消耗减半"
     },
     {
       "id": "fuhao",
@@ -263,7 +263,7 @@
       "cost": 20,
       "mvp": false,
       "portrait": "res://assets/portraits/fanlihua.jpg",
-      "skill": "奇门破阵：破招打断敌军意图额外造成25点穿甲伤，攻破城池+10民心"
+      "skill": "奇门破阵：破招打断敌军意图额外造成18点穿甲伤，攻破城池+8民心"
     },
     {
       "id": "banzhao",

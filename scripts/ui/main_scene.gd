@@ -131,6 +131,10 @@ var _pop_bar: ProgressBar
 var _pop_desc: Label
 var _pop_attack: Button
 var _crt_status: Label
+var _turn_hint := ""
+var _btn_end_turn: Button
+var _midgame_foreshadow_done: bool = false
+var _midgame_foreshadow_timer: float = 0.0
 var _lbl_act: Label
 var _lbl_morale: Label
 var _bar_morale: ProgressBar
@@ -591,9 +595,9 @@ func _build_stage_and_ui() -> void:
 	_btn_fleet = _button(crt_cmds, "", func(): _play_sfx("click"); _cancel_aim(); _result(core.build_fleet()), GOLD)
 	_btn_pact = _button(crt_cmds, "🔥 始皇密匣（限1次）", _open_pact_modal, CRIMSON)
 	_btn_pact.add_theme_color_override("font_color", GOLD)
-	var end_btn := _button(crt_cmds, "结束本回合  ⏭", func(): _play_sfx("chime"); _cancel_aim(); _result(core.end_turn()), GOLD)
-	end_btn.custom_minimum_size.y = 38
-	end_btn.add_theme_color_override("font_color", GOLD)
+	_btn_end_turn = _button(crt_cmds, "结束本回合  ⏭", func(): _play_sfx("chime"); _cancel_aim(); _result(core.end_turn()), GOLD)
+	_btn_end_turn.custom_minimum_size.y = 38
+	_btn_end_turn.add_theme_color_override("font_color", GOLD)
 
 	# 9. 左上极简青铜状态牌 + 实时 Buff 徽章条 + 右上工具胶囊
 	var top_plaque := PanelContainer.new()
@@ -1449,6 +1453,19 @@ func _process(delta: float) -> void:
 		_emperor_glare_timer = maxf(0.0, _emperor_glare_timer - delta)
 	if _crt_glitch_timer > 0.0:
 		_crt_glitch_timer = maxf(0.0, _crt_glitch_timer - delta)
+	if _midgame_foreshadow_timer > 0.0:
+		_midgame_foreshadow_timer = maxf(0.0, _midgame_foreshadow_timer - delta)
+		if _midgame_foreshadow_timer <= 0.0 and not _latest.is_empty():
+			_crt_status.modulate = Color.WHITE
+			_crt_status.text = "TERMINAL_2076\n剩余行动点 %d\n剩余常规进攻 %d 次" % [int(_latest.get("actions_left", 0)), int(_latest.get("attack_left", 0))]
+			_update_turn_hint(_latest)
+	if _btn_end_turn != null and not _latest.is_empty():
+		var turn_done := int(_latest.get("actions_left", 1)) <= 0 and (int(_latest.attack_left) <= 0 or bool(_latest.education_turn)) and not _modal_shade.visible and not _title_curtain.visible
+		if turn_done:
+			var glow := 1.08 + 0.18 * (0.5 + 0.5 * sin(_anim_time * 6.5))
+			_btn_end_turn.modulate = Color(glow, glow * 0.96, glow * 0.78, 1.0)
+		else:
+			_btn_end_turn.modulate = Color.WHITE
 	var vp := get_viewport_rect().size
 	if vp.x > 0 and vp.y > 0:
 		var m := get_viewport().get_mouse_position()
@@ -2132,6 +2149,8 @@ func _restart(show_banner: bool = true) -> void:
 	_hitstop_timer = 0.0
 	_emperor_glare_timer = 0.0
 	_crt_glitch_timer = 0.0
+	_midgame_foreshadow_done = false
+	_midgame_foreshadow_timer = 0.0
 	_drag_slot = -1
 	_drag_active = false
 	_used_nuke = false
@@ -2226,7 +2245,20 @@ func _on_state_changed(snap: Dictionary) -> void:
 		_lbl_conquest.modulate = Color.WHITE
 	_lbl_patience.text = "%s始皇耐心 %d" % ["⚠ " if _prev_patience <= 3 else "", _prev_patience]
 	_lbl_patience.modulate = CRIMSON if _prev_patience <= 3 else MUTED
-	_crt_status.text = "TERMINAL_2076\n剩余行动点 %d\n剩余常规进攻 %d 次" % [int(snap["actions_left"]), int(snap["attack_left"])]
+	if _midgame_foreshadow_timer <= 0.0:
+		_crt_status.modulate = Color.WHITE
+		_crt_status.text = "TERMINAL_2076\n剩余行动点 %d\n剩余常规进攻 %d 次" % [int(snap["actions_left"]), int(snap["attack_left"])]
+	if bool(snap.get("tactical_mode", false)) and not bool(snap.get("paradox_phase", false)) and not _midgame_foreshadow_done and int(snap.get("conquered_count", 0)) == 3 and not _title_curtain.visible:
+		_midgame_foreshadow_done = true
+		_midgame_foreshadow_timer = 2.8
+		_crt_glitch_timer = 2.4
+		_shake_strength = maxf(_shake_strength, 5.5)
+		_play_sfx("hover")
+		_spawn_sparks(_uv_to_stage(UV_CRT), CRIMSON, 18, 170.0, 40.0)
+		_crt_status.modulate = CRIMSON
+		_crt_status.text = "ERR_2076 // 偏离52%\n静默覆写始皇权限…\n[焚书协议待命中]"
+		_turn_hint = "⚠ [TERMINAL_2076] 历史偏离度 52%……正在静默写入底层校准协议……"
+		_lbl_ticker.text = _turn_hint
 	_vignette_mat.set_shader_parameter("danger_intensity", 1.0 if (low or bool(snap.get("paradox_phase", false))) else 0.0)
 
 	# 声音作为玩法信息源：第三幕切换紧张战鼓；民心 < 40 时起义喧哗随 (40 - 民心) 线性放大
@@ -2294,10 +2326,8 @@ func _on_state_changed(snap: Dictionary) -> void:
 			hb.add_theme_color_override("font_color", GOLD)
 
 	_update_first_turn_guide(snap)
-	if bool(snap.get("free_hook_available", false)):
-		_lbl_ticker.text = "★ 首回合高光：下方首次召唤【名臣】或拍出【无人机蜂群】免民心；点击沙盘发光点可直接出兵。"
-	elif _lbl_ticker.text == "":
-		_lbl_ticker.text = "点击沙盘发光点查看守军并出兵，按 1/2/3 快捷键可快速抬牌。"
+	if _midgame_foreshadow_timer <= 0.0:
+		_update_turn_hint(snap)
 
 	var new_sig := _cards_signature(snap["terminal_cards"])
 	var should_deal := (new_sig != _last_cards_sig) and not _title_curtain.visible
@@ -2306,16 +2336,34 @@ func _on_state_changed(snap: Dictionary) -> void:
 	_refresh_popover()
 
 
+func _update_turn_hint(snap: Dictionary) -> void:
+	var hint := ""
+	if int(snap.actions_left) <= 0:
+		if bool(snap.education_turn):
+			hint = "📚 义务教育使本回合无法常规进攻。行动点已用完，可结束本回合。"
+		elif int(snap.attack_left) > 0:
+			hint = "⚔ 行动点已用完。还可常规进攻 %d 次，点击发光战区出兵。" % int(snap.attack_left)
+		else:
+			hint = "✓ 行动点和常规进攻均已用完，可点击右下角【结束本回合】。"
+	elif bool(snap.free_hook_available):
+		hint = "★ 首回合首次召唤名臣或使用无人机免民心。名臣持续生效，无人机立刻打击前线。"
+	if hint != "":
+		_lbl_ticker.text = hint
+	elif _lbl_ticker.text == _turn_hint:
+		_lbl_ticker.text = "点击沙盘发光点查看守军并出兵，按 1/2/3 快捷键可快速抬牌。"
+	_turn_hint = hint
+
+
 func _update_first_turn_guide(snap: Dictionary) -> void:
 	if _guide_bar == null:
 		return
 	if bool(_meta_save.get("tutorial_done", false)) or _title_curtain.visible or int(snap.get("turn", 1)) > 1:
 		_guide_bar.visible = false
 		return
-	if bool(snap.get("free_hook_available", false)):
+	if bool(snap.free_hook_available) and int(snap.actions_left) > 0:
 		_guide_lbl.text = "💡 新手引导 1/3：召唤一位免费名臣，或把无人机拖到敌方战区。"
 		_guide_bar.visible = true
-	elif int(snap.get("attack_left", 0)) > 0:
+	elif int(snap.attack_left) > 0 and not bool(snap.education_turn):
 		_guide_lbl.text = "💡 新手引导 2/3：点击地图上的敌方战区，再点「常规进攻」。"
 		_guide_bar.visible = true
 	else:
@@ -2537,6 +2585,11 @@ func _create_tactile_card(slot: int) -> Control:
 	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	if is_free and not disabled:
+		var f_hint := "★ 长线常驻增益" if advisor else "★ 立刻速推前线"
+		var fl := _label(body, f_hint, 11, GOLD)
+		fl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		fl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var desc: String = data.skill if advisor else data.desc
 	if not advisor and data.needs_target:
 		var punch := "秒杀任意板块" if data.id == "nuke_seal" or (data.id == "drone" and core.has_advisor("huoqubing")) else "%d 战力打击" % _card_damage(data, 0)
@@ -2546,7 +2599,18 @@ func _create_tactile_card(slot: int) -> Control:
 	dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	dl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if disabled:
-		body.modulate = Color(0.6, 0.62, 0.64, 0.78)
+		body.modulate = Color(0.62, 0.64, 0.68, 0.80)
+		if not card.bought:
+			var why := "⛔ 本回合已进攻·禁买" if (data.id == "education" and _latest.attack_left <= 0) else "⛔ 行动点已尽"
+			var stamp := PanelContainer.new()
+			stamp.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+			stamp.offset_left = 14; stamp.offset_top = 55; stamp.offset_right = -14; stamp.offset_bottom = 79
+			stamp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			stamp.add_theme_stylebox_override("panel", _flat_style(Color(0.14, 0.05, 0.06, 0.94), CRIMSON, 4, 2))
+			root.add_child(stamp)
+			var wl := _label(stamp, why, 11, Color("#ffb8b8"))
+			wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			wl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var hit := Button.new()
 	hit.flat = true
