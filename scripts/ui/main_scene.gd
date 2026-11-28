@@ -124,6 +124,7 @@ var _card_base_pos: Array[Vector2] = []
 var _card_base_rot: Array[float] = [-3.0, 0.0, 3.0]
 var _popover: PanelContainer
 var _pop_img: TextureRect
+var _pop_art_holder: Control
 var _pop_badge: Label
 var _pop_title: Label
 var _pop_sub: Label
@@ -224,7 +225,7 @@ func _ready() -> void:
 		"livelihood": load("res://assets/icons/icon_livelihood.jpg"),
 		"blacktech": load("res://assets/icons/icon_blacktech.jpg"),
 	}
-	for lid in ["xianyang", "steppe", "west", "south_asia", "west_asia", "europe", "americas"]:
+	for lid in ["xianyang", "steppe", "west", "south_asia", "west_asia", "europe", "americas", "paradox_core"]:
 		var lp := "res://assets/landmarks/%s.jpg" % lid
 		if ResourceLoader.exists(lp):
 			_landmarks[lid] = load(lp)
@@ -512,18 +513,18 @@ func _build_stage_and_ui() -> void:
 	var img_wrap := PanelContainer.new()
 	img_wrap.add_theme_stylebox_override("panel", _flat_style(Color(0.02, 0.03, 0.04, 0.95), Color(0.55, 0.43, 0.24, 0.8), 2, 4))
 	pv.add_child(img_wrap)
-	var img_holder := Control.new()
-	img_holder.custom_minimum_size = Vector2(316, 178)
-	img_wrap.add_child(img_holder)
+	_pop_art_holder = Control.new()
+	_pop_art_holder.custom_minimum_size = Vector2(316, 178)
+	img_wrap.add_child(_pop_art_holder)
 	_pop_img = TextureRect.new()
 	_pop_img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_pop_img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_pop_img.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	img_holder.add_child(_pop_img)
+	_pop_art_holder.add_child(_pop_img)
 	var badge_bg := PanelContainer.new()
 	badge_bg.position = Vector2(8, 8)
 	badge_bg.add_theme_stylebox_override("panel", _flat_style(Color(0.03, 0.04, 0.055, 0.86), GOLD, 5, 4))
-	img_holder.add_child(badge_bg)
+	_pop_art_holder.add_child(badge_bg)
 	_pop_badge = _label(badge_bg, "", 11, GOLD)
 	_pop_sub = _label(pv, "", 12, CYAN)
 	_pop_bar = ProgressBar.new()
@@ -1383,8 +1384,14 @@ func _process(delta: float) -> void:
 	if _popover.visible and (_selected == "xianyang" or UV_REGIONS.has(_selected)):
 		var f_uv: Vector2 = UV_XIANYANG if _selected == "xianyang" else UV_REGIONS[_selected]
 		var sp := _uv_to_stage(f_uv) * _stage.scale.x + _stage.position
+		var max_panel_height := vp.y - 62.0 - 236.0
+		var chrome_height := _popover.get_combined_minimum_size().y - _pop_art_holder.custom_minimum_size.y
+		var art_height := clampf(max_panel_height - chrome_height, 80.0, 178.0)
+		if _pop_art_holder.custom_minimum_size.y != art_height:
+			_pop_art_holder.custom_minimum_size.y = art_height
+		_popover.reset_size()
 		var px := clampf(sp.x + 32.0, 16.0, vp.x - _popover.size.x - 18.0)
-		var py := clampf(sp.y - _popover.size.y * 0.5, 62.0, vp.y - _popover.size.y - 196.0)
+		var py := clampf(sp.y - _popover.size.y * 0.5, 62.0, maxf(62.0, vp.y - _popover.size.y - 236.0))
 		_popover.position = Vector2(px, py).round()
 
 	_stage_fx.queue_redraw()
@@ -2502,7 +2509,10 @@ func _refresh_popover() -> void:
 		if r["id"] != _selected:
 			continue
 		_popover.show()
-		_pop_img.texture = _landmarks.get(r["id"], null)
+		var ltex: Texture2D = _landmarks.get(r["id"], null)
+		if ltex == null and r.has("landmark") and ResourceLoader.exists(str(r["landmark"])):
+			ltex = load(str(r["landmark"]))
+		_pop_img.texture = ltex if ltex != null else _landmarks.get("xianyang", null)
 		var lm_name: String = str(r.get("landmark_name", r["coverage"]))
 		_pop_title.text = "%s · %s" % [r["name"], "已归玄黑" if r["conquered"] else "守军 %d/%d" % [int(r["hp"]), int(r["max_hp"])]]
 		_pop_bar.max_value = int(r["max_hp"])

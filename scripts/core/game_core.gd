@@ -1051,6 +1051,7 @@ func _awaken_paradox_boss() -> void:
 		"name": "2076·焚书终端核心",
 		"coverage": "2076 悖论终端",
 		"landmark_name": "焚书协议核心矩阵",
+		"landmark": "res://assets/landmarks/paradox_core.jpg",
 		"reward": "击碎时空闭环，成就真正的万世国师",
 		"efficiency": 1.0,
 		"hp": 260,
